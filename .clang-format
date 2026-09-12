@@ -1,0 +1,57 @@
+---
+Language: Cpp
+BasedOnStyle: Microsoft
+Standard: Latest # parse C++23 syntax (matches CMAKE_CXX_STANDARD 23)
+
+# === Indentation & Alignment ===
+UseTab: Always
+IndentWidth: 4
+TabWidth: 4
+ContinuationIndentWidth: 4
+AccessModifierOffset: -2
+AlignAfterOpenBracket: Align
+AlignOperands: Align
+AlignTrailingComments: true
+
+# === Braces & Blocks ===
+BreakBeforeBraces: Attach # void func() {
+BraceWrapping:
+  AfterFunction: true
+  AfterClass: true
+  AfterStruct: true
+  AfterNamespace: true
+  BeforeElse: true
+  BeforeCatch: true
+
+# === Line & Spacing ===
+ColumnLimit: 120
+SpaceBeforeParens: ControlStatements
+SpaceBeforeParensOptions:
+  AfterControlStatements: true
+  AfterFunctionDefinitionName: false
+  AfterFunctionDeclarationName: false
+PointerAlignment: Right
+DerivePointerAlignment: false # honor PointerAlignment, don't infer from the file
+SpaceAfterTemplateKeyword: true
+SpacesInContainerLiterals: true
+SpacesInParentheses: false
+SpacesInSquareBrackets: false
+
+# === Statements & Formatting Rules ===
+AllowShortFunctionsOnASingleLine: None
+AllowShortIfStatementsOnASingleLine: Never
+AllowShortLoopsOnASingleLine: false
+AllowShortBlocksOnASingleLine: Never
+AllowShortCaseLabelsOnASingleLine: false
+AllowAllParametersOfDeclarationOnNextLine: true
+AllowAllArgumentsOnNextLine: true
+
+# === Includes ===
+SortIncludes: CaseSensitive
+IncludeBlocks: Preserve
+
+# === Misc ===
+FixNamespaceComments: true
+NamespaceIndentation: None
+ReflowComments: true
+InsertNewlineAtEOF: true

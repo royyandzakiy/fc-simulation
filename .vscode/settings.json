@@ -1,0 +1,48 @@
+{
+  // ---- CMake ----
+  // Presets (CMakePresets.json) own the build directory and cache variables,
+  // so we deliberately do NOT set cmake.buildDirectory / configureSettings here.
+  "cmake.useCMakePresets": "always",
+  "cmake.options.statusBarVisibility": "visible",
+
+  // ---- clangd: the C/C++ language server ----
+  // Semantic behavior (index, diagnostics, inlay hints, clang-tidy) is configured
+  // in .clangd. These are launcher/driver flags that can't live in project config
+  // (e.g. --query-driver is rejected from .clangd for security).
+  "clangd.arguments": [
+    "--query-driver=**/clang*,**/clang-cl*,**/clang++*,**/g++*,**/gcc*,**/c++*",
+    "--header-insertion=iwyu",
+    "--header-insertion-decorators",
+    "--completion-style=detailed",
+    "--function-arg-placeholders=true",
+    "--pch-storage=memory",
+    "-j=4"
+  ],
+  "clangd.onConfigChanged": "restart",
+  "clangd.checkUpdates": false,
+
+  // Defer entirely to clangd. If the C/C++ extension is installed for its debugger
+  // (cppvsdbg/cppdbg in launch.json), keep all its language features off so it never
+  // competes with clangd.
+  "C_Cpp.intelliSenseEngine": "disabled",
+  "C_Cpp.formatting": "disabled",
+  "C_Cpp.codeAnalysis.runAutomatically": false,
+
+  // ---- Editor: format with clangd, driven by .clang-format ----
+  "[cpp]": {
+    "editor.defaultFormatter": "llvm-vs-code-extensions.vscode-clangd",
+    "editor.formatOnSave": true
+  },
+  "[c]": {
+    "editor.defaultFormatter": "llvm-vs-code-extensions.vscode-clangd",
+    "editor.formatOnSave": true
+  },
+  "python.analysis.diagnosticSeverityOverrides": {
+      "reportOptionalCall": "none"
+  },
+
+  // ---- File associations ----
+  "files.associations": {
+    "*.h.in": "cpp"
+  }
+}

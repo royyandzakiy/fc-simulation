@@ -1,0 +1,53 @@
+{
+  // Three debug configs, all preset-agnostic via ${command:cmake.launchTargetPath}
+  // (they follow the active CMake Tools target — pick app/unit_tests in the status bar).
+  // Pick the matching one from the F5 dropdown for your toolchain:
+  //   - LLDB     : default, cross-platform (Clang / Apple Clang / clang-cl / GCC)
+  //   - cppvsdbg : native Microsoft debugger for MSVC (Windows) — needs ms-vscode.cpptools
+  //   - GDB      : cppdbg for MinGW & gcc-linux                  — needs ms-vscode.cpptools
+  // cpptools (when installed) is used ONLY as a debugger; its IntelliSense/formatting are
+  // disabled in settings.json so it never competes with clangd.
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "type": "lldb",
+      "request": "launch",
+      "name": "Debug (LLDB · all OS)",
+      "program": "${command:cmake.launchTargetPath}",
+      "args": [],
+      "cwd": "${workspaceFolder}",
+      "env": {
+        "PATH": "${command:cmake.launchTargetDirectory}${pathSeparator}${env:PATH}"
+      },
+      "preLaunchTask": "CMake: build"
+    },
+    {
+      "type": "cppvsdbg",
+      "request": "launch",
+      "name": "Debug (Windows MSVC · cppvsdbg)",
+      "program": "${command:cmake.launchTargetPath}",
+      "args": [],
+      "cwd": "${workspaceFolder}",
+      "console": "integratedTerminal",
+      "preLaunchTask": "CMake: build"
+    },
+    {
+      "type": "cppdbg",
+      "request": "launch",
+      "name": "Debug (GDB · MinGW & GCC)",
+      "program": "${command:cmake.launchTargetPath}",
+      "args": [],
+      "cwd": "${workspaceFolder}",
+      "MIMode": "gdb",
+      "miDebuggerPath": "gdb",
+      "setupCommands": [
+        {
+          "description": "Enable pretty-printing for gdb",
+          "text": "-enable-pretty-printing",
+          "ignoreFailures": true
+        }
+      ],
+      "preLaunchTask": "CMake: build"
+    }
+  ]
+}

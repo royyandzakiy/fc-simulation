@@ -1,0 +1,59 @@
+# project_options.local.cmake — gitignored, never committed.
+#
+# Machine-local overrides. CMakeLists.txt includes this BEFORE project_options.cmake, so
+# (under policy CMP0077, NEW by default at cmake_minimum_required 3.28) these plain set()s
+# win over the option() defaults. This is the "maximise dev quality" profile: everything
+# that is a pure win is ON; mutually-exclusive build VARIANTS (sanitizers) and clean-build-
+# only throughput knobs (PCH/unity) are left to the presets / commented out.
+
+# =============================================================================
+# Package manager
+# =============================================================================
+# Provider: vcpkg | conan | none. Conan works with ANY preset (switching needs a fresh
+# build dir). Use "none" to manage deps yourself via system find_package().
+set(PKG_MANAGER conan)
+# clang-cl profiles are auto-selected; other compilers are auto-detected. Override only if needed:
+# set(CONAN_HOST_PROFILE "/path/to/your.ini")
+#
+# vcpkg only — set if vcpkg isn't on PATH / a standard location (auto-detects PATH, /opt/vcpkg,
+# C:/vcpkg, ~/vcpkg, ...):
+# set(VCPKG_ROOT_PATH "C:/vcpkg")     # Windows
+# set(VCPKG_ROOT_PATH "/opt/vcpkg")   # Linux / macOS
+
+# =============================================================================
+# Build everything
+# =============================================================================
+set(BUILD_TESTING ON)           # compile and register all tests under test/ (requires GTest)
+set(BUILD_EXAMPLES ON)          # build the examples/ demos (example_mylib, example_tracy, example_perfetto, …)
+set(GENERATE_VERSION_HEADER ON) # regenerate include/<project>/version.h from version.txt on every build
+
+# =============================================================================
+# Code quality
+# =============================================================================
+set(ENABLE_STRICT_COMPILER ON)  # -Werror (GCC/Clang) or /WX (MSVC) — warnings become hard errors, CI-friendly
+set(ENABLE_CLANG_TIDY ON)       # run clang-tidy on first-party production code (no-op if clang-tidy isn't installed)
+# set(ENABLE_SANITIZERS ON)
+# set(ENABLE_ASAN ON)
+# set(ENABLE_TSAN ON)
+# set(ENABLE_MSAN ON)
+
+# =============================================================================
+# Build speed
+# =============================================================================
+set(ENABLE_CCACHE ON)           # wrap compiles in ccache — huge speedup when switching branches or re-configuring
+set(ENABLE_FAST_LINKER ON)      # use mold (Linux) or lld (cross-platform) instead of GNU ld / MSVC link.exe
+
+# =============================================================================
+# profiling — activate ONLY when wanting to actively profile
+# =============================================================================
+# set(ENABLE_CLANG_BUILD_ANALYZER ON)  # Clang -ftime-trace → analyze *what* takes time to compile
+# set(ENABLE_TRACY ON)                 # Tracy: real-time low-overhead sampling profiler for runtime (CPU, GPU, memory, locks, zones)
+# set(ENABLE_PERFETTO ON)              # Perfetto: runtime tracing & trace analysis (lightweight instrumentation, rich trace viewer)
+
+# =============================================================================
+# Throughput
+# =============================================================================
+# PCH speeds clean/full builds but can slow incremental; unity is incremental-hostile.
+# Good for CI / big clean builds, not day-to-day editing:
+# set(ENABLE_PCH ON)             # precompile heavy headers (STL, …) — faster full builds, slower one-file changes
+# set(ENABLE_UNITY_BUILD ON)     # batch .cpp files into unity translation units — fastest clean builds, no incremental builds

@@ -1,0 +1,38 @@
+# clangd language-server config. Concerns are split by tool:
+#   .clangd        -> how the language server behaves (this file)
+#   .clang-tidy    -> which static-analysis checks run
+#   .clang-format  -> formatting style
+# CMake mirrors the active preset's compile DB to the project root (see CMakeLists.txt),
+# so "." resolves to build/<preset>/compile_commands.json for whatever you last configured.
+
+CompileFlags:
+  CompilationDatabase: .
+  # clangd parses with its own clang; drop driver-mode flags it can choke on
+  # when the DB was produced by clang-cl / MSVC.
+  Remove:
+    - /Fo*
+    - /Fd*
+    - /nologo
+    - -TP
+
+Index:
+  Background: Build          # keep the project index warm in the background
+  StandardLibrary: Yes       # index the STL for completion/xrefs
+
+Diagnostics:
+  UnusedIncludes: Strict     # IncludeCleaner: flag headers you don't use
+  MissingIncludes: Strict    # flag symbols used via transitive includes
+  ClangTidy:
+    FastCheckFilter: Loose   # run more tidy checks in-editor (config in .clang-tidy)
+
+InlayHints:
+  Enabled: Yes
+  ParameterNames: Yes
+  DeducedTypes: Yes
+  Designators: Yes
+
+Hover:
+  ShowAKA: Yes               # resolve typedefs in hover ("aka: std::string")
+
+Completion:
+  AllScopes: Yes             # suggest symbols from all namespaces, with auto-import

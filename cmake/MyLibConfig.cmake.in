@@ -1,0 +1,11 @@
+@PACKAGE_INIT@
+
+include(CMakeFindDependencyMacro)
+
+# MyLib has no PUBLIC external dependencies. If that changes, declare them here with
+# find_dependency() (NOT find_package), e.g.:
+#   find_dependency(fmt CONFIG)
+
+include("${CMAKE_CURRENT_LIST_DIR}/MyLibTargets.cmake")
+
+check_required_components(MyLib)

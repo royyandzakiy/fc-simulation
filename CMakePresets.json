@@ -1,0 +1,613 @@
+{
+        "version": 4,
+        "cmakeMinimumRequired": {
+                "major": 3,
+                "minor": 23,
+                "patch": 0
+        },
+        "configurePresets": [
+                {
+                        "name": "base",
+                        "hidden": true,
+                        "binaryDir": "${sourceDir}/build/${presetName}",
+                        "cacheVariables": {
+                                "CMAKE_EXPORT_COMPILE_COMMANDS": "ON"
+                        }
+                },
+                {
+                        "name": "win-vcpkg-base",
+                        "hidden": true,
+                        "inherits": "base",
+                        "condition": {
+                                "type": "equals",
+                                "lhs": "${hostSystemName}",
+                                "rhs": "Windows"
+                        },
+                        "cacheVariables": {
+                                "VCPKG_TARGET_TRIPLET": "x64-windows"
+                        }
+                },
+                {
+                        "name": "msvc-base",
+                        "hidden": true,
+                        "inherits": "win-vcpkg-base",
+                        "generator": "Ninja",
+                        "architecture": {
+                                "value": "x64",
+                                "strategy": "external"
+                        },
+                        "cacheVariables": {
+                                "CMAKE_RUNTIME_OUTPUT_DIRECTORY": "${sourceDir}/bin/msvc",
+								"CMAKE_C_COMPILER": "cl.exe",
+        						"CMAKE_CXX_COMPILER": "cl.exe"
+                        }
+                },
+                {
+                        "name": "clang-cl-base",
+                        "hidden": true,
+                        "inherits": "win-vcpkg-base",
+                        "generator": "Ninja",
+                        "cacheVariables": {
+                                "CMAKE_C_COMPILER": "clang-cl",
+                                "CMAKE_CXX_COMPILER": "clang-cl",
+                                "CMAKE_RUNTIME_OUTPUT_DIRECTORY": "${sourceDir}/bin/clang-cl"
+                        }
+                },
+                {
+                        "name": "mingw-base",
+                        "hidden": true,
+                        "inherits": "base",
+                        "generator": "Ninja",
+                        "condition": {
+                                "type": "equals",
+                                "lhs": "${hostSystemName}",
+                                "rhs": "Windows"
+                        },
+                        "cacheVariables": {
+                                "CMAKE_C_COMPILER": "gcc",
+                                "CMAKE_CXX_COMPILER": "g++",
+                                "VCPKG_TARGET_TRIPLET": "x64-mingw-static",
+                                "CMAKE_RUNTIME_OUTPUT_DIRECTORY": "${sourceDir}/bin/mingw"
+                        }
+                },
+                {
+                        "name": "linux-base",
+                        "hidden": true,
+                        "inherits": "base",
+                        "generator": "Ninja",
+                        "condition": {
+                                "type": "equals",
+                                "lhs": "${hostSystemName}",
+                                "rhs": "Linux"
+                        },
+                        "cacheVariables": {
+                                "VCPKG_TARGET_TRIPLET": "x64-linux"
+                        }
+                },
+                {
+                        "name": "clang-linux-base",
+                        "hidden": true,
+                        "inherits": "linux-base",
+                        "cacheVariables": {
+                                "CMAKE_C_COMPILER": "clang",
+                                "CMAKE_CXX_COMPILER": "clang++",
+                                "CMAKE_RUNTIME_OUTPUT_DIRECTORY": "${sourceDir}/bin/clang"
+                        }
+                },
+                {
+                        "name": "gcc-linux-base",
+                        "hidden": true,
+                        "inherits": "linux-base",
+                        "cacheVariables": {
+                                "CMAKE_C_COMPILER": "gcc",
+                                "CMAKE_CXX_COMPILER": "g++",
+                                "CMAKE_RUNTIME_OUTPUT_DIRECTORY": "${sourceDir}/bin/gcc"
+                        }
+                },
+                {
+                        "name": "mac-base",
+                        "hidden": true,
+                        "inherits": "base",
+                        "generator": "Ninja",
+                        "condition": {
+                                "type": "equals",
+                                "lhs": "${hostSystemName}",
+                                "rhs": "Darwin"
+                        },
+                        "cacheVariables": {
+                                "CMAKE_RUNTIME_OUTPUT_DIRECTORY": "${sourceDir}/bin/mac",
+                                "VCPKG_TARGET_TRIPLET": "arm64-osx"
+                        }
+                },
+                {
+                        "name": "appleclang-base",
+                        "hidden": true,
+                        "inherits": "mac-base",
+                        "cacheVariables": {
+                                "CMAKE_C_COMPILER": "clang",
+                                "CMAKE_CXX_COMPILER": "clang++"
+                        }
+                },
+                {
+                        "name": "build-debug",
+                        "hidden": true,
+                        "cacheVariables": {
+                                "CMAKE_BUILD_TYPE": "Debug"
+                        }
+                },
+                {
+                        "name": "build-release",
+                        "hidden": true,
+                        "cacheVariables": {
+                                "CMAKE_BUILD_TYPE": "Release"
+                        }
+                },
+                {
+                        "name": "msvc-debug",
+                        "displayName": "MSVC Debug",
+                        "inherits": [
+                                "msvc-base",
+                                "build-debug"
+                        ]
+                },
+                {
+                        "name": "msvc-release",
+                        "displayName": "MSVC Release",
+                        "inherits": [
+                                "msvc-base",
+                                "build-release"
+                        ]
+                },
+                {
+                        "name": "clang-cl-debug",
+                        "displayName": "Clang-CL Debug",
+                        "inherits": [
+                                "clang-cl-base",
+                                "build-debug"
+                        ]
+                },
+                {
+                        "name": "clang-cl-release",
+                        "displayName": "Clang-CL Release",
+                        "inherits": [
+                                "clang-cl-base",
+                                "build-release"
+                        ]
+                },
+                {
+                        "name": "mingw-debug",
+                        "displayName": "MinGW Debug",
+                        "inherits": [
+                                "mingw-base",
+                                "build-debug"
+                        ]
+                },
+                {
+                        "name": "mingw-release",
+                        "displayName": "MinGW Release",
+                        "inherits": [
+                                "mingw-base",
+                                "build-release"
+                        ]
+                },
+                {
+                        "name": "clang-linux-debug",
+                        "displayName": "Clang Debug",
+                        "inherits": [
+                                "clang-linux-base",
+                                "build-debug"
+                        ],
+                        "cacheVariables": {
+                                "ENABLE_COVERAGE": "ON"
+                        }
+                },
+                {
+                        "name": "gcc-linux-debug",
+                        "displayName": "GCC Debug",
+                        "inherits": [
+                                "gcc-linux-base",
+                                "build-debug"
+                        ]
+                },
+                {
+                        "name": "clang-linux-release",
+                        "displayName": "Clang Release",
+                        "inherits": [
+                                "clang-linux-base",
+                                "build-release"
+                        ]
+                },
+                {
+                        "name": "gcc-linux-release",
+                        "displayName": "GCC Release",
+                        "inherits": [
+                                "gcc-linux-base",
+                                "build-release"
+                        ]
+                },
+                {
+                        "name": "appleclang-debug",
+                        "displayName": "AppleClang Debug",
+                        "inherits": [
+                                "appleclang-base",
+                                "build-debug"
+                        ],
+                        "cacheVariables": {
+                                "ENABLE_COVERAGE": "ON"
+                        }
+                },
+                {
+                        "name": "appleclang-release",
+                        "displayName": "AppleClang Release",
+                        "inherits": [
+                                "appleclang-base",
+                                "build-release"
+                        ]
+                },
+                {
+                        "name": "sanitizer-base",
+                        "hidden": true,
+                        "cacheVariables": {
+                                "ENABLE_SANITIZERS": "ON",
+                                "BUILD_TESTING": "ON"
+                        }
+                },
+                {
+                        "name": "clang-linux-asan",
+                        "displayName": "Clang Debug + ASan/LSan",
+                        "inherits": [
+                                "clang-linux-base",
+                                "build-debug",
+                                "sanitizer-base"
+                        ],
+                        "cacheVariables": {
+                                "ENABLE_ASAN": "ON"
+                        }
+                },
+                {
+                        "name": "clang-linux-tsan",
+                        "displayName": "Clang Debug + TSan",
+                        "inherits": [
+                                "clang-linux-base",
+                                "build-debug",
+                                "sanitizer-base"
+                        ],
+                        "cacheVariables": {
+                                "ENABLE_TSAN": "ON"
+                        }
+                },
+                {
+                        "name": "clang-linux-msan",
+                        "displayName": "Clang Debug + MSan",
+                        "inherits": [
+                                "clang-linux-base",
+                                "build-debug",
+                                "sanitizer-base"
+                        ],
+                        "cacheVariables": {
+                                "ENABLE_MSAN": "ON"
+                        }
+                },
+                {
+                        "name": "msvc-asan",
+                        "displayName": "MSVC Debug + ASan",
+                        "inherits": [
+                                "msvc-base",
+                                "build-debug",
+                                "sanitizer-base"
+                        ],
+                        "cacheVariables": {
+                                "ENABLE_ASAN": "ON"
+                        }
+                },
+                {
+                        "name": "clang-cl-asan",
+                        "displayName": "Clang-CL Debug + ASan",
+                        "inherits": [
+                                "clang-cl-base",
+                                "build-debug",
+                                "sanitizer-base"
+                        ],
+                        "cacheVariables": {
+                                "ENABLE_ASAN": "ON",
+                                "CONAN_HOST_PROFILE": "${sourceDir}/cmake/conan-profiles/clang-cl-windows-asan.ini"
+                        }
+                },
+                {
+                        "name": "clang-linux-full",
+                        "displayName": "Clang Debug + Everything (ASan/LSan/UBSan, strict, tidy, PCH, unity, examples)",
+                        "inherits": [
+                                "clang-linux-base",
+                                "build-debug",
+                                "sanitizer-base"
+                        ],
+                        "cacheVariables": {
+                                "ENABLE_ASAN": "ON",
+                                "ENABLE_STRICT_COMPILER": "ON",
+                                "ENABLE_CLANG_TIDY": "ON",
+                                "ENABLE_PCH": "ON",
+                                "ENABLE_UNITY_BUILD": "ON",
+                                "BUILD_EXAMPLES": "ON"
+                        }
+                },
+                {
+                        "name": "clang-cl-lib-only-debug",
+                        "displayName": "Clang-CL — MyLib only (Debug)",
+                        "inherits": [
+                                "clang-cl-base",
+                                "build-debug"
+                        ],
+                        "cacheVariables": {
+                                "BUILD_APP": "OFF",
+                                "BUILD_LIB": "ON"
+                        }
+                },
+                {
+                        "name": "clang-cl-lib-only-release",
+                        "displayName": "Clang-CL — MyLib only (Release)",
+                        "inherits": [
+                                "clang-cl-base",
+                                "build-release"
+                        ],
+                        "cacheVariables": {
+                                "BUILD_APP": "OFF",
+                                "BUILD_LIB": "ON"
+                        }
+                },
+                {
+                        "name": "clang-linux-lib-only-debug",
+                        "displayName": "Clang Linux — MyLib only (Debug)",
+                        "inherits": [
+                                "clang-linux-base",
+                                "build-debug"
+                        ],
+                        "cacheVariables": {
+                                "BUILD_APP": "OFF",
+                                "BUILD_LIB": "ON"
+                        }
+                },
+                {
+                        "name": "clang-linux-lib-only-release",
+                        "displayName": "Clang Linux — MyLib only (Release)",
+                        "inherits": [
+                                "clang-linux-base",
+                                "build-release"
+                        ],
+                        "cacheVariables": {
+                                "BUILD_APP": "OFF",
+                                "BUILD_LIB": "ON"
+                        }
+                }
+        ],
+        "buildPresets": [
+                {
+                        "name": "base-build",
+                        "hidden": true,
+                        "inheritConfigureEnvironment": true
+                },
+                {
+                        "name": "build-type-debug",
+                        "hidden": true,
+                        "inherits": "base-build",
+                        "configuration": "Debug"
+                },
+                {
+                        "name": "build-type-release",
+                        "hidden": true,
+                        "inherits": "base-build",
+                        "configuration": "Release"
+                },
+                {
+                        "name": "msvc-debug",
+                        "inherits": "build-type-debug",
+                        "configurePreset": "msvc-debug"
+                },
+                {
+                        "name": "msvc-release",
+                        "inherits": "build-type-release",
+                        "configurePreset": "msvc-release"
+                },
+                {
+                        "name": "clang-cl-debug",
+                        "inherits": "build-type-debug",
+                        "configurePreset": "clang-cl-debug"
+                },
+                {
+                        "name": "clang-cl-release",
+                        "inherits": "build-type-release",
+                        "configurePreset": "clang-cl-release"
+                },
+                {
+                        "name": "mingw-debug",
+                        "inherits": "build-type-debug",
+                        "configurePreset": "mingw-debug"
+                },
+                {
+                        "name": "mingw-release",
+                        "inherits": "build-type-release",
+                        "configurePreset": "mingw-release"
+                },
+                {
+                        "name": "clang-linux-debug",
+                        "inherits": "build-type-debug",
+                        "configurePreset": "clang-linux-debug"
+                },
+                {
+                        "name": "gcc-linux-debug",
+                        "inherits": "build-type-debug",
+                        "configurePreset": "gcc-linux-debug"
+                },
+                {
+                        "name": "clang-linux-release",
+                        "inherits": "build-type-release",
+                        "configurePreset": "clang-linux-release"
+                },
+                {
+                        "name": "gcc-linux-release",
+                        "inherits": "build-type-release",
+                        "configurePreset": "gcc-linux-release"
+                },
+                {
+                        "name": "appleclang-debug",
+                        "inherits": "build-type-debug",
+                        "configurePreset": "appleclang-debug"
+                },
+                {
+                        "name": "appleclang-release",
+                        "inherits": "build-type-release",
+                        "configurePreset": "appleclang-release"
+                },
+                {
+                        "name": "clang-linux-asan",
+                        "inherits": "build-type-debug",
+                        "configurePreset": "clang-linux-asan"
+                },
+                {
+                        "name": "clang-linux-tsan",
+                        "inherits": "build-type-debug",
+                        "configurePreset": "clang-linux-tsan"
+                },
+                {
+                        "name": "clang-linux-msan",
+                        "inherits": "build-type-debug",
+                        "configurePreset": "clang-linux-msan"
+                },
+                {
+                        "name": "msvc-asan",
+                        "inherits": "build-type-debug",
+                        "configurePreset": "msvc-asan"
+                },
+                {
+                        "name": "clang-cl-asan",
+                        "inherits": "build-type-debug",
+                        "configurePreset": "clang-cl-asan"
+                },
+                {
+                        "name": "clang-linux-full",
+                        "inherits": "build-type-debug",
+                        "configurePreset": "clang-linux-full"
+                },
+                {
+                        "name": "clang-cl-lib-only-debug",
+                        "inherits": "build-type-debug",
+                        "configurePreset": "clang-cl-lib-only-debug"
+                },
+                {
+                        "name": "clang-cl-lib-only-release",
+                        "inherits": "build-type-release",
+                        "configurePreset": "clang-cl-lib-only-release"
+                },
+                {
+                        "name": "clang-linux-lib-only-debug",
+                        "inherits": "build-type-debug",
+                        "configurePreset": "clang-linux-lib-only-debug"
+                },
+                {
+                        "name": "clang-linux-lib-only-release",
+                        "inherits": "build-type-release",
+                        "configurePreset": "clang-linux-lib-only-release"
+                }
+        ],
+        "testPresets": [
+                {
+                        "name": "base-test",
+                        "hidden": true,
+                        "output": {
+                                "outputOnFailure": true
+                        }
+                },
+                {
+                        "name": "test-msvc-debug",
+                        "inherits": "base-test",
+                        "configurePreset": "msvc-debug",
+                        "configuration": "Debug"
+                },
+                {
+                        "name": "test-msvc-release",
+                        "inherits": "base-test",
+                        "configurePreset": "msvc-release",
+                        "configuration": "Release"
+                },
+                {
+                        "name": "test-clang-cl-debug",
+                        "inherits": "base-test",
+                        "configurePreset": "clang-cl-debug"
+                },
+                {
+                        "name": "test-clang-cl-release",
+                        "inherits": "base-test",
+                        "configurePreset": "clang-cl-release"
+                },
+                {
+                        "name": "test-mingw-debug",
+                        "inherits": "base-test",
+                        "configurePreset": "mingw-debug"
+                },
+                {
+                        "name": "test-mingw-release",
+                        "inherits": "base-test",
+                        "configurePreset": "mingw-release"
+                },
+                {
+                        "name": "test-clang-linux-debug",
+                        "inherits": "base-test",
+                        "configurePreset": "clang-linux-debug"
+                },
+                {
+                        "name": "test-gcc-linux-debug",
+                        "inherits": "base-test",
+                        "configurePreset": "gcc-linux-debug"
+                },
+                {
+                        "name": "test-clang-linux-release",
+                        "inherits": "base-test",
+                        "configurePreset": "clang-linux-release"
+                },
+                {
+                        "name": "test-gcc-linux-release",
+                        "inherits": "base-test",
+                        "configurePreset": "gcc-linux-release"
+                },
+                {
+                        "name": "test-appleclang-debug",
+                        "inherits": "base-test",
+                        "configurePreset": "appleclang-debug"
+                },
+                {
+                        "name": "test-appleclang-release",
+                        "inherits": "base-test",
+                        "configurePreset": "appleclang-release"
+                },
+                {
+                        "name": "test-clang-linux-asan",
+                        "inherits": "base-test",
+                        "configurePreset": "clang-linux-asan"
+                },
+                {
+                        "name": "test-clang-linux-tsan",
+                        "inherits": "base-test",
+                        "configurePreset": "clang-linux-tsan"
+                },
+                {
+                        "name": "test-clang-linux-msan",
+                        "inherits": "base-test",
+                        "configurePreset": "clang-linux-msan"
+                },
+                {
+                        "name": "test-msvc-asan",
+                        "inherits": "base-test",
+                        "configurePreset": "msvc-asan",
+                        "configuration": "Debug"
+                },
+                {
+                        "name": "test-clang-cl-asan",
+                        "inherits": "base-test",
+                        "configurePreset": "clang-cl-asan"
+                },
+                {
+                        "name": "test-clang-linux-full",
+                        "inherits": "base-test",
+                        "configurePreset": "clang-linux-full"
+                }
+        ]
+}
