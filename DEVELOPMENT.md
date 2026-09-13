@@ -1,5 +1,4 @@
-- make the fc to rcv the sensor and show it in logs
-- make the fc send motor packet out
-    - fc reads the joystick (arm, throttle, maneuver)
-    - sim reads the motor packet and translates
-    - fc fly follows sensor readings
+- add to switch pov camera infront / away
+- add ability to switch modes: acro, stab
+- create zephyr version
+- use usb hid joystick
