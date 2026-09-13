@@ -1,0 +1,13 @@
+# gym-pybullet-drones is not on PyPI, and the dependencies it declares pull
+# stable-baselines3 -> PyTorch (several GB) that the simulator never imports:
+# it only uses CtrlAviary. Install with --no-deps; The root requirements.txt
+# already pins everything CtrlAviary needs at runtime.
+#
+# --ignore-requires-python is needed too: upstream declares >=3.12, but the
+# package is pure Python and runs fine on 3.11, which is what pybullet is
+# verified against here.
+#
+#   pip install --no-deps --ignore-requires-python -r requirements-gpd.txt
+#
+# Pinned to the commit hil_bridge/bridge.py documents its API against.
+gym_pybullet_drones @ git+https://github.com/utiasDSL/gym-pybullet-drones.git@7ebad1e
