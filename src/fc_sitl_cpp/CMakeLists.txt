@@ -1,4 +1,4 @@
-set(MY_PROJECT_NAME ${PROJECT_NAME})
+set(MY_PROJECT_NAME fc_sitl_cpp)
 add_executable(${MY_PROJECT_NAME})
 
 file(GLOB SOURCES *.cpp)
