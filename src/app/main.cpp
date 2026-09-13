@@ -22,6 +22,7 @@
 #include <SDL3/SDL_stdinc.h>
 #include <SDL3/SDL_timer.h>
 #include <array>
+#include <cstdint>
 #include <cstdio>
 #include <fmt/base.h>
 
@@ -334,57 +335,57 @@ int main(int argc, char **argv) {
 	fmt::println(stderr, "throttle: {}", throttle);
 	fmt::println("press buttons / push sticks to max, Ctrl+C to quit\n");
 
-	for (;;) {
-		pad.debug_print();
-		SDL_Delay(8); // ~120 Hz poll for snappy button edges
-	}
+	// for (;;) {
+	// 	pad.debug_print();
+	// 	SDL_Delay(8); // ~120 Hz poll for snappy button edges
+	// }
 
 	// ---------------------------------------------------------------
 	// Original lockstep loop - commented out while debugging buttons.
 	// ---------------------------------------------------------------
-	//
-	// plat::ByteStream io = io_dev.empty() ? plat::ByteStream{} : plat::ByteStream{io_dev};
-	// if (!io.valid()) {
-	// 	fmt::print(stderr, "io: cannot open {}\n", io_dev);
-	// 	return 1;
-	// }
-	//
-	// fmt::print(stderr, "io: {}   throttle: {}\n", io_dev.empty() ? "stdin/stdout" : io_dev, throttle);
-	// fmt::print(stderr, "hold LB to arm from low throttle, B to disarm\n");
-	//
-	// fc::Controller controller;
-	// bool was_armed = false;
-	//
-	// for (;;) {
-	// 	// resync on the sync byte, then pull the rest of the frame
-	// 	std::uint8_t b{};
-	// 	if (!io.read_exact(&b, 1))
-	// 		break;
-	// 	if (b != fc::kSyncSensor)
-	// 		continue;
-	//
-	// 	fc::SensorPacket s{};
-	// 	s.sync = b;
-	// 	if (!io.read_exact(reinterpret_cast<std::uint8_t *>(&s) + 1, sizeof(s) - 1)) {
-	// 		break;
-	// 	}
-	//
-	// 	if (fc::packet_crc(s) != s.crc) {
-	// 		fmt::print(stderr, "rx: bad crc, dropping\n");
-	// 		continue;
-	// 	}
-	//
-	// 	const fc::Sticks rc = pad.poll();
-	//
-	// 	if (rc.armed != was_armed) {
-	// 		fmt::print(stderr, "{}\n", rc.armed ? "ARMED" : "disarmed");
-	// 		was_armed = rc.armed;
-	// 	}
-	//
-	// 	const fc::MotorPacket out = controller.step(s, rc);
-	// 	if (!io.write_all(&out, sizeof(out)))
-	// 		break;
-	// }
+
+	plat::ByteStream io = io_dev.empty() ? plat::ByteStream{} : plat::ByteStream{io_dev};
+	if (!io.valid()) {
+		fmt::print(stderr, "io: cannot open {}\n", io_dev);
+		return 1;
+	}
+
+	fmt::print(stderr, "io: {}   throttle: {}\n", io_dev.empty() ? "stdin/stdout" : io_dev, throttle);
+	fmt::print(stderr, "hold LB to arm from low throttle, B to disarm\n");
+
+	fc::Controller controller;
+	bool was_armed = false;
+
+	for (;;) {
+		// resync on the sync byte, then pull the rest of the frame
+		std::uint8_t b{};
+		if (!io.read_exact(&b, 1))
+			break;
+		if (b != fc::kSyncSensor)
+			continue;
+
+		fc::SensorPacket s{};
+		s.sync = b;
+		if (!io.read_exact(reinterpret_cast<std::uint8_t *>(&s) + 1, sizeof(s) - 1)) {
+			break;
+		}
+
+		if (fc::packet_crc(s) != s.crc) {
+			fmt::print(stderr, "rx: bad crc, dropping\n");
+			continue;
+		}
+
+		const fc::Sticks rc = pad.poll();
+
+		if (rc.armed != was_armed) {
+			fmt::print(stderr, "{}\n", rc.armed ? "ARMED" : "disarmed");
+			was_armed = rc.armed;
+		}
+
+		const fc::MotorPacket out = controller.step(s, rc);
+		if (!io.write_all(&out, sizeof(out)))
+			break;
+	}
 
 	return 0;
 }
