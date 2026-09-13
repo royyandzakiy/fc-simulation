@@ -40,6 +40,7 @@ CTRL_HZ = 240
 MAX_TILT = np.radians(30.0)      # what full right-stick deflection asks for
 MAX_YAW_RATE = np.radians(180.0)  # deg/s at full left-stick left/right
 ARM_THROTTLE = 0.05              # throttle must be below this to arm
+IDLE_THRUST = 0.03               # fraction of max thrust at armed, zero throttle
 
 # --- control gains, in RPM per unit of error ------------------------------
 KP_ANGLE = 9000.0       # angle error -> corrective RPM split
@@ -76,10 +77,31 @@ class State(ctypes.Structure):
 
 
 def deadzone(v, dz):
-    """Rescale so the stick still reaches 1.0 after the dead band is removed."""
+    """Centre dead band, for sticks that should mean 'nothing' when released.
+
+    Right for yaw, roll and pitch. Wrong for throttle - see throttle_from.
+    """
     if abs(v) < dz:
         return 0.0
     return (abs(v) - dz) / (1.0 - dz) * (1.0 if v > 0 else -1.0)
+
+
+def throttle_from(v, edge=0.02):
+    """Stick travel to 0..1 throttle: fully DOWN is zero, fully UP is full.
+
+    No centre dead band. Throttle is not a centring control, so a dead zone in
+    the middle would just make a band of stick positions all mean the same
+    thing. The small edges instead guarantee the stick bottoms out at exactly
+    0.0 and tops out at exactly 1.0, which is what the arming check needs.
+
+    Note the halfway point is 0.5, and a gamepad stick springs back to halfway.
+    """
+    t = (v + 1.0) / 2.0
+    if t <= edge:
+        return 0.0
+    if t >= 1.0 - edge:
+        return 1.0
+    return (t - edge) / (1.0 - 2.0 * edge)
 
 
 def open_pad(slot):
@@ -99,13 +121,14 @@ def open_pad(slot):
         if xinput.XInputGetState(slot, ctypes.byref(state)) != 0:
             return None                      # unplugged: caller disarms
         g = state.Gamepad
-        ly = deadzone(max(-1.0, g.sThumbLY / 32767.0), DEADZONE_L)
         lx = deadzone(max(-1.0, g.sThumbLX / 32767.0), DEADZONE_L)
         rx = deadzone(max(-1.0, g.sThumbRX / 32767.0), DEADZONE_R)
         ry = deadzone(max(-1.0, g.sThumbRY / 32767.0), DEADZONE_R)
-        # Stick fully down is zero throttle, fully up is full. A gamepad stick
-        # springs back to centre, so letting go leaves you at half throttle.
-        return {"throttle": (ly + 1.0) / 2.0,
+        # Throttle takes the raw axis, not the dead-banded one: a dead zone
+        # belongs around the centre of a self-centring control, and throttle
+        # is not one. A gamepad stick still springs back to halfway, so
+        # letting go leaves you at 50%, not idle.
+        return {"throttle": throttle_from(max(-1.0, g.sThumbLY / 32767.0)),
                 "yaw": lx, "roll": rx, "pitch": ry,
                 "lb": bool(g.wButtons & LB)}
 
@@ -135,8 +158,16 @@ def main():
         ctrl_freq=CTRL_HZ,
         gui=not args.no_gui,
     )
-    idle_rpm = env.HOVER_RPM * 0.25
-    top_rpm = env.MAX_RPM * 0.95
+    # The stick commands THRUST, not RPM. Thrust goes as rpm squared, so a
+    # stick mapped straight to RPM wastes its whole bottom half: half stick
+    # would be a quarter of the thrust, and this airframe needs 44% of max
+    # thrust just to hover. Mapping to thrust and taking the square root puts
+    # hover near the middle of the stick, where it belongs.
+    #
+    # It is also the same conversion hil_bridge/bridge.py already does with the
+    # motor demands coming out of the firmware:
+    #     action = MAX_RPM * sqrt(clip(m, 0, 1))
+    hover_thr = ((env.HOVER_RPM / env.MAX_RPM) ** 2 - IDLE_THRUST) / (1.0 - IDLE_THRUST)
 
     print("\n  left stick   up/down     throttle (fully down = zero)")
     print("  left stick   left/right  yaw rate")
@@ -144,7 +175,9 @@ def main():
     print("  right stick  up/down     pitch angle")
     print("  LB                       arm / disarm")
     print(f"\nstabilised mode, max tilt {np.degrees(MAX_TILT):.0f} deg. "
-          "Hold throttle down to arm. Ctrl+C to quit.\n")
+          "Hold throttle down to arm. Ctrl+C to quit.")
+    print(f"hover is around {hover_thr * 100:.0f}% throttle; "
+          "a released stick sits at 50%.\n")
 
     armed = False
     was_lb = False
@@ -190,7 +223,8 @@ def main():
                 u_pitch = KP_ANGLE * (pitch_sp - pitch) - KD_RATE * q_rate
                 u_yaw = KP_YAW * (yaw_rate_sp - r_rate)
 
-                base = idle_rpm + pad["throttle"] * (top_rpm - idle_rpm)
+                thrust = IDLE_THRUST + pad["throttle"] * (1.0 - IDLE_THRUST)
+                base = env.MAX_RPM * np.sqrt(thrust)
                 action[0, :] = np.clip(
                     base + MIXER @ np.array([u_roll, u_pitch, u_yaw]),
                     0.0, env.MAX_RPM)

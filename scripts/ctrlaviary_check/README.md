@@ -180,10 +180,33 @@ asks for 30 degrees of bank; centre the stick and the drone returns to level by
 itself. In acro the same stick would command a *rate*, and centring it would
 only stop the rotation, leaving the drone tilted wherever it happened to be.
 
-Throttle maps zero at the bottom of the stick travel to full at the top, so
-hover sits around 64%. Note a gamepad stick springs back to **centre**, not to
-the bottom - let go and you are at 50% throttle, not idle. A real transmitter
-has a throttle stick that stays where you put it.
+Throttle is linear across the whole stick travel: **fully down is 0.00**,
+centre is 0.50, fully up is 1.00. Unlike the other three axes it has no centre
+dead band - a dead zone belongs around the middle of a self-centring control,
+and throttle is not one. It has small dead zones at the *ends* instead, so the
+stick reliably bottoms out at exactly zero, which is what the arming check
+needs.
+
+**The stick commands thrust, not RPM.** Thrust goes as rpm squared, so mapping
+the stick straight to RPM wastes its whole lower half - half stick would be a
+quarter of the thrust, and this airframe needs 44% of max thrust just to hover.
+Mapping to thrust and taking the square root puts hover at about **43%**, near
+the middle of the stick where it belongs:
+
+| stick | linear RPM (wrong) | thrust-based (now) |
+| --- | --- | --- |
+| 0.30 | 8717 | 12296 |
+| 0.50 | 12117 | 15575 - flies |
+| 0.70 | 15517 - flies | 18274 |
+
+Hover needs 14468 rpm. This is also the same conversion
+`hil_bridge/bridge.py` already applies to the firmware's motor demands,
+`MAX_RPM * sqrt(m)`, so the two agree on what a throttle number means.
+
+Being at the bottom is required **only to arm**. Once armed the throttle is just
+throttle. And note a gamepad stick springs back to **centre**, so letting go
+leaves you at 50%, not idle - a real transmitter's throttle stays where you put
+it.
 
 ### What to expect
 
