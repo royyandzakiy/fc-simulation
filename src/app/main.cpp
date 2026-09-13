@@ -39,6 +39,19 @@ namespace {
 // SDL_CONTROLLER_BUTTON_B -> SDL_GAMEPAD_BUTTON_EAST, and SDL_Init now
 // returns bool (true on success) rather than int (0 on success).
 // -------------------------------------------------------------------
+
+// Debug-only thresholds, same as the standalone dpad.cpp printer.
+constexpr float kFull = 0.90f; // "at max" threshold (0..1)
+constexpr float kDead = 0.20f; // ignore noise below this
+constexpr int kAxisMax = 32767;
+
+// Button + last state, so we only print on change.
+struct Btn {
+	const char *name;
+	SDL_GamepadButton id;
+	bool last = false;
+};
+
 class Gamepad {
   public:
 	static constexpr float kDeadband = 0.08f;
@@ -131,6 +144,72 @@ class Gamepad {
 		return s;
 	}
 
+	// ---------------------------------------------------------------
+	// Debug printer: mirrors the standalone dpad.cpp behavior.
+	// Call once per frame from the main loop instead of / in addition
+	// to poll(). Reads raw SDL state directly, bypassing fc::Sticks,
+	// so it can show every button and every axis edge.
+	// ---------------------------------------------------------------
+	void debug_print() {
+		if (!pad_)
+			return;
+
+		SDL_UpdateGamepads();
+
+		if (!SDL_GamepadConnected(pad_)) {
+			fmt::println("\npad: disconnected");
+			return;
+		}
+
+		// ---- buttons: report on change ----
+		for (auto &b : buttons_) {
+			const bool now = SDL_GetGamepadButton(pad_, b.id);
+			if (now != b.last) {
+				fmt::println("button {:<14} {}", b.name, now ? "DOWN" : "up");
+				b.last = now;
+			}
+		}
+
+		// ---- triggers: report on full squeeze ----
+		const Sint16 lt = SDL_GetGamepadAxis(pad_, SDL_GAMEPAD_AXIS_LEFT_TRIGGER);
+		const Sint16 rt = SDL_GetGamepadAxis(pad_, SDL_GAMEPAD_AXIS_RIGHT_TRIGGER);
+		if (lt > kAxisMax * kFull && !axis_reported_[SDL_GAMEPAD_AXIS_LEFT_TRIGGER]) {
+			fmt::println("trigger left       MAX ({})", lt);
+			axis_reported_[SDL_GAMEPAD_AXIS_LEFT_TRIGGER] = true;
+		} else if (lt < kAxisMax * kDead) {
+			axis_reported_[SDL_GAMEPAD_AXIS_LEFT_TRIGGER] = false;
+		}
+		if (rt > kAxisMax * kFull && !axis_reported_[SDL_GAMEPAD_AXIS_RIGHT_TRIGGER]) {
+			fmt::println("trigger right      MAX ({})", rt);
+			axis_reported_[SDL_GAMEPAD_AXIS_RIGHT_TRIGGER] = true;
+		} else if (rt < kAxisMax * kDead) {
+			axis_reported_[SDL_GAMEPAD_AXIS_RIGHT_TRIGGER] = false;
+		}
+
+		// ---- sticks: report per-axis when pushed to max ----
+		struct {
+			const char *name;
+			SDL_GamepadAxis axis;
+		} sticks[] = {
+			{"left stick  X", SDL_GAMEPAD_AXIS_LEFTX},
+			{"left stick  Y", SDL_GAMEPAD_AXIS_LEFTY},
+			{"right stick X", SDL_GAMEPAD_AXIS_RIGHTX},
+			{"right stick Y", SDL_GAMEPAD_AXIS_RIGHTY},
+		};
+		for (auto &s : sticks) {
+			const float v = SDL_GetGamepadAxis(pad_, s.axis) / 32767.0f;
+			const bool full = (v > kFull) || (v < -kFull);
+			const int idx = s.axis; // unique per physical axis
+			if (full && !axis_reported_[idx]) {
+				const char *dir = (v > 0) ? "+" : "-";
+				fmt::println("axis    {:<14} MAX {} ({:.2f})", s.name, dir, v);
+				axis_reported_[idx] = true;
+			} else if (!full && v > -kDead && v < kDead) {
+				axis_reported_[idx] = false;
+			}
+		}
+	}
+
 	static void list() {
 		SDL_SetMainReady();
 		if (!SDL_Init(SDL_INIT_GAMEPAD)) {
@@ -178,6 +257,32 @@ class Gamepad {
 	bool sdl_ready_{false};
 	Throttle mode_;
 	fc::ArmingGate gate_{};
+
+	// Debug printer state.
+	Btn buttons_[21] = {
+		{"south (A)", SDL_GAMEPAD_BUTTON_SOUTH},
+		{"east (B)", SDL_GAMEPAD_BUTTON_EAST},
+		{"west (X)", SDL_GAMEPAD_BUTTON_WEST},
+		{"north (Y)", SDL_GAMEPAD_BUTTON_NORTH},
+		{"back", SDL_GAMEPAD_BUTTON_BACK},
+		{"guide", SDL_GAMEPAD_BUTTON_GUIDE},
+		{"start", SDL_GAMEPAD_BUTTON_START},
+		{"left stick", SDL_GAMEPAD_BUTTON_LEFT_STICK},
+		{"right stick", SDL_GAMEPAD_BUTTON_RIGHT_STICK},
+		{"left shoulder", SDL_GAMEPAD_BUTTON_LEFT_SHOULDER},
+		{"right shoulder", SDL_GAMEPAD_BUTTON_RIGHT_SHOULDER},
+		{"dpad up", SDL_GAMEPAD_BUTTON_DPAD_UP},
+		{"dpad down", SDL_GAMEPAD_BUTTON_DPAD_DOWN},
+		{"dpad left", SDL_GAMEPAD_BUTTON_DPAD_LEFT},
+		{"dpad right", SDL_GAMEPAD_BUTTON_DPAD_RIGHT},
+		{"misc1", SDL_GAMEPAD_BUTTON_MISC1},
+		{"paddle1", SDL_GAMEPAD_BUTTON_RIGHT_PADDLE1},
+		{"paddle2", SDL_GAMEPAD_BUTTON_LEFT_PADDLE1},
+		{"paddle3", SDL_GAMEPAD_BUTTON_RIGHT_PADDLE2},
+		{"paddle4", SDL_GAMEPAD_BUTTON_LEFT_PADDLE2},
+		{"touchpad", SDL_GAMEPAD_BUTTON_TOUCHPAD},
+	};
+	bool axis_reported_[SDL_GAMEPAD_AXIS_COUNT] = {};
 };
 
 } // namespace
@@ -209,50 +314,67 @@ int main(int argc, char **argv) {
 		return 0;
 	}
 
-	plat::ByteStream io = io_dev.empty() ? plat::ByteStream{} : plat::ByteStream{io_dev};
-	if (!io.valid()) {
-		fmt::print(stderr, "io: cannot open {}\n", io_dev);
-		return 1;
-	}
-
+	// ---------------------------------------------------------------
+	// Debug mode: comment out all sensor I/O and motor output, and
+	// just stream gamepad state to the console. Identical in effect
+	// to the standalone dpad.cpp printer.
+	// ---------------------------------------------------------------
 	Gamepad pad{throttle == "trigger" ? Gamepad::Throttle::RightTrigger : Gamepad::Throttle::LeftStick};
 
-	fmt::print(stderr, "io: {}   throttle: {}\n", io_dev.empty() ? "stdin/stdout" : io_dev, throttle);
-	fmt::print(stderr, "hold LB to arm from low throttle, B to disarm\n");
-
-	fc::Controller controller;
-	bool was_armed = false;
+	fmt::println(stderr, "throttle: {}", throttle);
+	fmt::println("press buttons / push sticks to max, Ctrl+C to quit\n");
 
 	for (;;) {
-		// resync on the sync byte, then pull the rest of the frame
-		std::uint8_t b{};
-		if (!io.read_exact(&b, 1))
-			break;
-		if (b != fc::kSyncSensor)
-			continue;
-
-		fc::SensorPacket s{};
-		s.sync = b;
-		if (!io.read_exact(reinterpret_cast<std::uint8_t *>(&s) + 1, sizeof(s) - 1)) {
-			break;
-		}
-
-		if (fc::packet_crc(s) != s.crc) {
-			fmt::print(stderr, "rx: bad crc, dropping\n");
-			continue;
-		}
-
-		const fc::Sticks rc = pad.poll();
-
-		if (rc.armed != was_armed) {
-			fmt::print(stderr, "{}\n", rc.armed ? "ARMED" : "disarmed");
-			was_armed = rc.armed;
-		}
-
-		const fc::MotorPacket out = controller.step(s, rc);
-		if (!io.write_all(&out, sizeof(out)))
-			break;
+		pad.debug_print();
+		SDL_Delay(8); // ~120 Hz poll for snappy button edges
 	}
+
+	// ---------------------------------------------------------------
+	// Original lockstep loop - commented out while debugging buttons.
+	// ---------------------------------------------------------------
+	//
+	// plat::ByteStream io = io_dev.empty() ? plat::ByteStream{} : plat::ByteStream{io_dev};
+	// if (!io.valid()) {
+	// 	fmt::print(stderr, "io: cannot open {}\n", io_dev);
+	// 	return 1;
+	// }
+	//
+	// fmt::print(stderr, "io: {}   throttle: {}\n", io_dev.empty() ? "stdin/stdout" : io_dev, throttle);
+	// fmt::print(stderr, "hold LB to arm from low throttle, B to disarm\n");
+	//
+	// fc::Controller controller;
+	// bool was_armed = false;
+	//
+	// for (;;) {
+	// 	// resync on the sync byte, then pull the rest of the frame
+	// 	std::uint8_t b{};
+	// 	if (!io.read_exact(&b, 1))
+	// 		break;
+	// 	if (b != fc::kSyncSensor)
+	// 		continue;
+	//
+	// 	fc::SensorPacket s{};
+	// 	s.sync = b;
+	// 	if (!io.read_exact(reinterpret_cast<std::uint8_t *>(&s) + 1, sizeof(s) - 1)) {
+	// 		break;
+	// 	}
+	//
+	// 	if (fc::packet_crc(s) != s.crc) {
+	// 		fmt::print(stderr, "rx: bad crc, dropping\n");
+	// 		continue;
+	// 	}
+	//
+	// 	const fc::Sticks rc = pad.poll();
+	//
+	// 	if (rc.armed != was_armed) {
+	// 		fmt::print(stderr, "{}\n", rc.armed ? "ARMED" : "disarmed");
+	// 		was_armed = rc.armed;
+	// 	}
+	//
+	// 	const fc::MotorPacket out = controller.step(s, rc);
+	// 	if (!io.write_all(&out, sizeof(out)))
+	// 		break;
+	// }
 
 	return 0;
 }
