@@ -15,6 +15,7 @@
 #include "fc_core.hpp"
 #include "platform.hpp"
 #include <SDL3/SDL_error.h>
+#include <SDL3/SDL_events.h>
 #include <SDL3/SDL_gamepad.h>
 #include <SDL3/SDL_hints.h>
 #include <SDL3/SDL_init.h>
@@ -115,6 +116,18 @@ class Gamepad {
 		return pad_ != nullptr;
 	}
 
+	// Refresh device state. SDL_UpdateGamepads() on its own is not enough
+	// on Windows: the RAWINPUT driver receives device data as window
+	// messages, and only SDL_PumpEvents() drains the message queue, so
+	// without this the axes sit at zero forever. Draining the event queue
+	// also stops it growing without bound over a long run.
+	static void pump() noexcept {
+		SDL_Event e;
+		while (SDL_PollEvent(&e)) { // implies SDL_PumpEvents()
+		}
+		SDL_UpdateGamepads();
+	}
+
 	// Refresh pad state without an event loop. Never blocks, so the
 	// lockstep control loop keeps its cadence regardless of pad activity.
 	fc::Sticks poll() noexcept {
@@ -125,7 +138,7 @@ class Gamepad {
 			return s;
 		}
 
-		SDL_UpdateGamepads();
+		pump();
 
 		if (!SDL_GamepadConnected(pad_)) { // unplugged mid-flight
 			fmt::print(stderr, "pad: disconnected, failsafe\n");
@@ -165,7 +178,7 @@ class Gamepad {
 		if (!pad_)
 			return;
 
-		SDL_UpdateGamepads();
+		pump();
 
 		if (!SDL_GamepadConnected(pad_)) {
 			fmt::println("\npad: disconnected");
@@ -311,12 +324,15 @@ int main(int argc, char **argv) {
 	std::string io_dev;
 	std::string throttle = "stick";
 	bool do_list = false;
+	bool debug_pad = false;
 
 	app.add_option("--dev", io_dev,
 				   "serial device, e.g. COM7 or /dev/ttyUSB0 "
 				   "(default: stdin/stdout pipes)");
 	app.add_option("--throttle", throttle, "throttle source")->check(CLI::IsMember({"stick", "trigger"}));
 	app.add_flag("--list", do_list, "list detected gamepads and exit");
+	app.add_flag("--debug-pad", debug_pad,
+				 "stream gamepad state to the console instead of flying");
 
 	CLI11_PARSE(app, argc, argv);
 
@@ -325,23 +341,26 @@ int main(int argc, char **argv) {
 		return 0;
 	}
 
-	// ---------------------------------------------------------------
-	// Debug mode: comment out all sensor I/O and motor output, and
-	// just stream gamepad state to the console. Identical in effect
-	// to the standalone dpad.cpp printer.
-	// ---------------------------------------------------------------
 	Gamepad pad{throttle == "trigger" ? Gamepad::Throttle::RightTrigger : Gamepad::Throttle::LeftStick};
 
 	fmt::println(stderr, "throttle: {}", throttle);
-	fmt::println("press buttons / push sticks to max, Ctrl+C to quit\n");
-
-	// for (;;) {
-	// 	pad.debug_print();
-	// 	SDL_Delay(8); // ~120 Hz poll for snappy button edges
-	// }
 
 	// ---------------------------------------------------------------
-	// Original lockstep loop - commented out while debugging buttons.
+	// Debug mode: no sensor I/O and no motor output, just gamepad state
+	// on the console. Identical in effect to the standalone dpad.cpp
+	// printer, and the quickest way to tell a dead pad from a dead
+	// control loop.
+	// ---------------------------------------------------------------
+	if (debug_pad) {
+		fmt::println(stderr, "press buttons / push sticks to max, Ctrl+C to quit\n");
+		for (;;) {
+			pad.debug_print();
+			SDL_Delay(8); // ~120 Hz poll for snappy button edges
+		}
+	}
+
+	// ---------------------------------------------------------------
+	// Lockstep loop: one motor packet out per sensor packet in.
 	// ---------------------------------------------------------------
 
 	plat::ByteStream io = io_dev.empty() ? plat::ByteStream{} : plat::ByteStream{io_dev};

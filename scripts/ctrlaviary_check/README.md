@@ -114,13 +114,13 @@ are live at all. **The sticks do nothing yet**; that is the next step.
 scripts\ctrlaviary_check\.venv\Scripts\python.exe scripts\ctrlaviary_check\pad_demo.py
 ```
 
-Press **LB** (button 4) to arm, press it again to disarm. Disarmed, the motors
-are hard zero and the drone sits on the ground or falls out of the sky. Armed,
-they spin up and it climbs.
+Press **LB** to arm, press it again to disarm. Disarmed, the motors are hard
+zero and the drone sits on the ground or falls out of the sky. Armed, they spin
+up and it climbs.
 
 ```
-pad: Xbox 360 Controller
-press button 4 to arm, press again to disarm. Ctrl+C to quit.
+pad: XInput controller in slot 0
+press LB to arm, press again to disarm. Ctrl+C to quit.
 t=  0.0s  ---  z= 0.112 m  rpm=     0.0
 t=  1.0s  ARMED   z=0.01 m
 t=  2.0s  ARM  z= 0.211 m  rpm= 14757.8
@@ -128,15 +128,12 @@ t=  4.0s  DISARMED   z=1.69 m
 t=  6.0s  ---  z= 0.013 m  rpm=     0.0
 ```
 
-Flags: `--button N`, `--pad N`, `--no-gui`, `--seconds N`, and `--list`.
+Flags: `--pad N` (controller slot 0-3), `--no-gui`, `--seconds N`.
 
-**`--list` tells you which button is which.** It prints every press with its
-index and any stick that moves, so you can find the one you want without
-guessing:
-
-```bash
-scripts\ctrlaviary_check\.venv\Scripts\python.exe scripts\ctrlaviary_check\pad_demo.py --list
-```
+The pad is read through **XInput via ctypes**, the same way
+`scripts/gamepad_test` does - part of Windows, so there is nothing to install
+for it. pygame was tried first and read nothing but zeros on this machine; if
+the pad ever seems dead, check it with `scripts/gamepad_test` first.
 
 Two details worth knowing:
 
@@ -148,8 +145,8 @@ armed would depend on how long you held it.
 controller spins the motors at idle on arm and waits for throttle. There is no
 throttle stick wired up yet, so idling would make arming invisible.
 
-The Xbox pad reports 11 buttons and 6 axes here. Axes 4 and 5 are the triggers,
-resting at `-1.0`, not `0.0` - worth remembering when the throttle gets mapped.
+Windows-only, and XInput sees Xbox-style pads only - the same limits as
+`scripts/gamepad_test`.
 
 ## What this validates for `hil_bridge`
 

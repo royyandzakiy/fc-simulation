@@ -8,10 +8,8 @@
 numpy==2.4.6
 scipy==1.17.1
 
-# --- pad_demo.py only: reads the gamepad ---
-# SDL2 under the hood, same family as the SDL3 the firmware uses, so the
-# button numbering agrees with what fc_simulation sees.
-pygame==2.6.1
+# pad_demo.py reads the gamepad through XInput via ctypes - part of Windows,
+# so there is nothing to install for it. pygame was tried and read only zeros.
 
 # --- pulled in by gym_pybullet_drones.envs.CtrlAviary ---
 pybullet==3.2.7

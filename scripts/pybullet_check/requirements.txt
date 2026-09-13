@@ -1,5 +1,7 @@
 # Minimal set to prove PyBullet (and its OpenGL window) works on this machine.
-# Pinned to versions with prebuilt Windows wheels for CPython 3.11 —
-# nothing here compiles from source, so no MSVC toolchain is needed.
+#
+# pybullet publishes NO Windows wheels (manylinux only), so pip builds it
+# from the sdist - that needs MSVC build tools and takes a few minutes.
+# numpy installs from a wheel.
 pybullet==3.2.7
 numpy==2.2.6
