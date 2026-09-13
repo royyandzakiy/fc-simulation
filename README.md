@@ -23,7 +23,7 @@ t=  2.0s ARM thr=0.62 z=  3.60 m  roll=  -0.0 pitch=  +0.0 deg  m=['0.62','0.62'
 
 - **Lockstep HIL over a pipe.** Every physics step blocks on the controller's
   reply, so nothing runs in real time and a run reproduces exactly.
-- **Binary framing with CRC**, declared once in `src/app/fc_core.hpp` and
+- **Binary framing with CRC**, declared once in `src/fc_sitl_cpp/fc_core.hpp` and
   mirrored in Python: 22-byte sensor frame (`0xA5`), 39-byte motor frame
   (`0x5A`), CRC-8 poly `0xD5`, the same polynomial CRSF uses.
 - **Flight logic with zero I/O.** `fc_core.hpp` holds the rate PID, the mixer
@@ -33,6 +33,64 @@ t=  2.0s ARM thr=0.62 z=  3.60 m  roll=  -0.0 pitch=  +0.0 deg  m=['0.62','0.62'
   27 g, rather than a physics model I made up.
 - **The gamepad belongs to the controller**, not to the simulator, because that
   is where the receiver lives on a real aircraft.
+
+## Architecture
+
+Two processes. The firmware knows nothing about the simulator, and the
+simulator has no control law of its own, so killing either one leaves the other
+obviously broken rather than quietly compensating.
+
+```mermaid
+flowchart LR
+    subgraph PY["simulator/5_fc_sitl_cpp (Python)"]
+        W["CtrlAviary<br/>pybullet, CF2X, 240 Hz"]
+        IMU["IMU<br/>world rates to body rates"]
+        CONV["m to RPM<br/>MAX_RPM * sqrt(m)"]
+        W --> IMU
+        CONV --> W
+    end
+
+    subgraph CPP["src/fc_sitl_cpp (C++23)"]
+        PID["RatePid x3<br/>acro rate loop"]
+        MIX["Mixer<br/>CF2X X-layout"]
+        GATE["ArmingGate<br/>LB toggles"]
+        PAD["SDL3 gamepad"]
+        PAD --> GATE --> PID --> MIX
+    end
+
+    IMU -- "0xA5 sensor, 22 B<br/>seq, dt, gyro x3, crc" --> PID
+    MIX -- "0x5A motor, 39 B<br/>seq, m x4, rc x4, armed, crc" --> CONV
+
+    HW["real board<br/>--dev COM7"]
+    CPP -.->|"same binary,<br/>pipe swapped for a serial port"| HW
+```
+
+Every physics step blocks on the controller's reply. Nothing runs in real time,
+so a run reproduces exactly, and a controller that is slow to answer just makes
+the sim take longer rather than dropping frames.
+
+The gamepad hangs off the firmware, not the simulator, because that is where
+the receiver sits on a real aircraft. The plant never sees a stick position, it
+only sees four motor demands coming back.
+
+## Progression
+
+Each step adds exactly one thing. The column that changes is the point of that
+step.
+
+| step | plant | controller | link | sticks |
+| --- | --- | --- | --- | --- |
+| 1 | hand-made `quad.urdf`, forces in newtons | Python PD, same process | none | none |
+| 2 | none | none | none | **read the pad** |
+| 3 | **CtrlAviary, CF2X, motor RPM** | Python, stabilised | none | **both sticks** |
+| 4 | CtrlAviary | Python, acro | **JSON lines over a pipe** | pad, owned by the controller |
+| 5 | CtrlAviary | **C++ `fc_simulation`** | **binary + CRC-8** | pad over SDL3 |
+
+Step 3 is where the interface stops being invented: `CtrlAviary` owns the
+mixer, so the controller's job becomes producing four motor demands, which is
+what the firmware already produces. Step 4 moves the controller out of the
+process. Step 5 replaces it with the real one and nothing about the plant has
+to change.
 
 ## Requirements
 

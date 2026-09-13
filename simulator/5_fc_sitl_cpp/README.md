@@ -1,8 +1,8 @@
 # 5. The real C++ controller in the loop
 
 Same split as [step 4](../4_fc_sitl_py/README.md), except the controller is the
-actual `fc_simulation` binary from `src/app/`, and the link is the binary CRC
-framing declared in `src/app/fc_core.hpp` instead of JSON.
+actual `fc_simulation` binary from `src/fc_sitl_cpp/`, and the link is the binary CRC
+framing declared in `src/fc_sitl_cpp/fc_core.hpp` instead of JSON.
 
 ```
   plant.py                                 fc_simulation.exe
@@ -41,7 +41,7 @@ Controller flags worth knowing: `--script arm-hover` / `--script arm-climb-roll`
 
 ## Wire format
 
-Exactly the structs in `src/app/fc_core.hpp`, which `static_assert` their own
+Exactly the structs in `src/fc_sitl_cpp/fc_core.hpp`, which `static_assert` their own
 sizes. [protocol.py](protocol.py) mirrors them with `struct` and a hand-rolled
 CRC, so this step installs nothing extra. The bytes are identical either way.
 
@@ -70,9 +70,9 @@ prints for a human goes to stderr.
 The sticks command a rate, not an angle, for the same reason as step 4: the
 sensor frame carries body rates and nothing else.
 
-## What this needed in src/app
+## What this needed in src/fc_sitl_cpp
 
-- **`add_subdirectory(src/app)` was commented out** in the root `CMakeLists.txt`,
+- **`add_subdirectory(src/fc_sitl_cpp)` was commented out** in the root `CMakeLists.txt`,
   so `fc_simulation` was not being built at all. `cmake --build` reported
   success while doing nothing and the stale binary sat in `bin/`.
 - **Arming is a toggle now, not hold-to-arm.** `ArmingGate` used to disarm
