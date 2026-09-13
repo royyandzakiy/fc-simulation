@@ -1,3 +1,5 @@
+# scripts/bridge.py
+
 #!/usr/bin/env python3
 """
 bridge.py - gym-pybullet-drones <-> fc_min, in lockstep.

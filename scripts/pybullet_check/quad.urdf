@@ -1,0 +1,62 @@
+<?xml version="1.0"?>
+<!-- Minimal quadrotor: a body box plus four spinning rotor discs in X layout.
+     pybullet ships no drone model, so this is the whole aircraft. Mass and
+     arm length are roughly a 500 g class quad. -->
+<robot name="quad">
+
+  <link name="base">
+    <inertial>
+      <mass value="0.5"/>
+      <inertia ixx="0.0015" iyy="0.0015" izz="0.0027" ixy="0" ixz="0" iyz="0"/>
+    </inertial>
+    <visual>
+      <geometry><box size="0.18 0.18 0.05"/></geometry>
+      <material name="dark"><color rgba="0.15 0.17 0.20 1"/></material>
+    </visual>
+    <collision>
+      <geometry><box size="0.18 0.18 0.05"/></geometry>
+    </collision>
+  </link>
+
+  <!-- Rotors. front-left/front-right are lighter coloured so orientation is
+       readable at a glance, the way a real quad uses coloured props. -->
+  <link name="rotor_fl">
+    <inertial><mass value="0.01"/><inertia ixx="1e-5" iyy="1e-5" izz="1e-5" ixy="0" ixz="0" iyz="0"/></inertial>
+    <visual><geometry><cylinder radius="0.06" length="0.008"/></geometry>
+      <material name="lit"><color rgba="0.90 0.35 0.20 1"/></material></visual>
+  </link>
+  <link name="rotor_fr">
+    <inertial><mass value="0.01"/><inertia ixx="1e-5" iyy="1e-5" izz="1e-5" ixy="0" ixz="0" iyz="0"/></inertial>
+    <visual><geometry><cylinder radius="0.06" length="0.008"/></geometry>
+      <material name="lit"><color rgba="0.90 0.35 0.20 1"/></material></visual>
+  </link>
+  <link name="rotor_rl">
+    <inertial><mass value="0.01"/><inertia ixx="1e-5" iyy="1e-5" izz="1e-5" ixy="0" ixz="0" iyz="0"/></inertial>
+    <visual><geometry><cylinder radius="0.06" length="0.008"/></geometry>
+      <material name="grey"><color rgba="0.55 0.58 0.62 1"/></material></visual>
+  </link>
+  <link name="rotor_rr">
+    <inertial><mass value="0.01"/><inertia ixx="1e-5" iyy="1e-5" izz="1e-5" ixy="0" ixz="0" iyz="0"/></inertial>
+    <visual><geometry><cylinder radius="0.06" length="0.008"/></geometry>
+      <material name="grey"><color rgba="0.55 0.58 0.62 1"/></material></visual>
+  </link>
+
+  <!-- continuous, so a velocity motor can spin them for show -->
+  <joint name="j_fl" type="continuous">
+    <parent link="base"/><child link="rotor_fl"/>
+    <origin xyz="0.13 0.13 0.03"/><axis xyz="0 0 1"/>
+  </joint>
+  <joint name="j_fr" type="continuous">
+    <parent link="base"/><child link="rotor_fr"/>
+    <origin xyz="0.13 -0.13 0.03"/><axis xyz="0 0 1"/>
+  </joint>
+  <joint name="j_rl" type="continuous">
+    <parent link="base"/><child link="rotor_rl"/>
+    <origin xyz="-0.13 0.13 0.03"/><axis xyz="0 0 1"/>
+  </joint>
+  <joint name="j_rr" type="continuous">
+    <parent link="base"/><child link="rotor_rr"/>
+    <origin xyz="-0.13 -0.13 0.03"/><axis xyz="0 0 1"/>
+  </joint>
+
+</robot>
