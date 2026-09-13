@@ -331,8 +331,10 @@ class ScriptedSticks {
 		t_ += dt;
 		fc::Sticks s{};
 
-		// Arming is hold-to-arm, so the arm control stays held throughout.
-		const bool hold_arm = t_ >= 0.5f;
+		// A tap, not a hold: press at 0.5 s, release at 0.55 s. Arming toggles
+		// on the press edge, so it stays armed after the release - which is
+		// the whole point of the tap, and what hold-to-arm got wrong.
+		const bool arm_btn = (t_ >= 0.5f && t_ < 0.55f);
 		float throttle = 0.0f;
 
 		if (name_ == "arm-hover") {
