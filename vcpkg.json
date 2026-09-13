@@ -2,8 +2,21 @@
 	"dependencies": [
 		"fmt",
 		"gtest",
-		"sdl2",
-    	"cli11"
+		"cli11",
+		{
+			"name": "sdl2",
+			"default-features": false,
+			"features": [
+				{
+					"name": "x11",
+					"platform": "linux"
+				},
+				{
+					"name": "wayland",
+					"platform": "linux"
+				}
+			]
+		}
 	],
 
 	"builtin-baseline": "8f63c9ed5897d7367a92a442a79f91721e0fd38f"

@@ -1,4 +1,4 @@
-set(MY_PROJECT_NAME ${PROJECT_NAME})
+set(gamepad_btn_test ${PROJECT_NAME})
 add_executable(${MY_PROJECT_NAME})
 
 file(GLOB SOURCES *.cpp)

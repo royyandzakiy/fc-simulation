@@ -1,37 +1,43 @@
-// fc_min.cpp - host side: SDL2 gamepad, CLI11 args, fmt logging.
+// fc_min.cpp - host side: SDL3 gamepad, CLI11 args, fmt logging.
 //
-//   vcpkg install            (reads vcpkg.json)
-//   cmake --preset default && cmake --build build
+//   conan install . --output-folder=build --build=missing -s compiler.cppstd=17
+//   cmake --preset conan-default
+//   cmake --build build --config Release
 //
-//   ./fc_min                          pipes, first pad SDL finds
-//   ./fc_min --throttle trigger       RT for throttle instead of left stick
-//   ./fc_min --dev /dev/pts/7         pty instead of pipes
-//   ./fc_min --list                   show detected pads and exit
+//   fc_min                          pipes, first pad SDL finds
+//   fc_min --throttle trigger       right trigger instead of left stick
+//   fc_min --dev COM7               serial instead of pipes
+//   fc_min --list                   show detected pads and exit
 //
-// All three libraries live here, never in fc_core.hpp. SDL gives a normalized
-// controller abstraction, so there is no per-driver axis map to calibrate.
+// Portable across clang-cl, MSVC, GCC and Clang. All OS-specific I/O is in
+// platform.hpp; all flight logic is in fc_core.hpp. This file is glue.
 
 #include "fc_core.hpp"
+#include "platform.hpp"
+
+// SDL3 hijacks main() unless told not to. We want a plain console entry
+// point, so we handle main ourselves and call SDL_SetMainReady().
+#define SDL_MAIN_HANDLED
+#include <SDL3/SDL.h>
+#include <SDL3/SDL_main.h>
 
 #include <CLI/CLI.hpp>
-#include <SDL.h>
 #include <fmt/core.h>
 
-#include <cerrno>
 #include <string>
-
-#include <fcntl.h>
-#include <termios.h>
-#include <unistd.h>
 
 namespace {
 
 // -------------------------------------------------------------------
-// Gamepad - SDL_GameController.
+// Gamepad - SDL3.
 //
 // SDL remaps every known pad onto one virtual layout via its controller
-// database, so LEFTX is LEFTX whether the pad is xpad, xone, wireless,
-// or a PlayStation clone. That removes the whole calibration step.
+// database, so LEFTX is LEFTX whether the pad is xpad, xone, XInput,
+// wireless, or a PlayStation clone. No per-driver calibration step.
+//
+// SDL3 renamed most of this from SDL2: SDL_GameController -> SDL_Gamepad,
+// SDL_CONTROLLER_BUTTON_B -> SDL_GAMEPAD_BUTTON_EAST, and SDL_Init now
+// returns bool (true on success) rather than int (0 on success).
 // -------------------------------------------------------------------
 class Gamepad {
   public:
@@ -47,27 +53,33 @@ class Gamepad {
 		// of input focus. This hint is what makes headless work.
 		SDL_SetHint(SDL_HINT_JOYSTICK_ALLOW_BACKGROUND_EVENTS, "1");
 
-		if (SDL_Init(SDL_INIT_GAMECONTROLLER) != 0) {
+		SDL_SetMainReady();
+
+		if (!SDL_Init(SDL_INIT_GAMEPAD)) { // SDL3: true means success
 			fmt::print(stderr, "sdl: init failed: {}\n", SDL_GetError());
 			return;
 		}
 		sdl_ready_ = true;
 
-		for (int i = 0; i < SDL_NumJoysticks(); ++i) {
-			if (!SDL_IsGameController(i))
-				continue;
-			pad_ = SDL_GameControllerOpen(i);
-			if (pad_) {
-				fmt::print(stderr, "pad: {}\n", SDL_GameControllerName(pad_));
-				return;
+		int count = 0;
+		SDL_JoystickID *ids = SDL_GetGamepads(&count);
+		if (ids) {
+			for (int i = 0; i < count; ++i) {
+				pad_ = SDL_OpenGamepad(ids[i]);
+				if (pad_) {
+					fmt::print(stderr, "pad: {}\n", SDL_GetGamepadName(pad_));
+					break;
+				}
 			}
+			SDL_free(ids);
 		}
-		fmt::print(stderr, "pad: none found, staying disarmed\n");
+		if (!pad_)
+			fmt::print(stderr, "pad: none found, staying disarmed\n");
 	}
 
 	~Gamepad() {
 		if (pad_)
-			SDL_GameControllerClose(pad_);
+			SDL_CloseGamepad(pad_);
 		if (sdl_ready_)
 			SDL_Quit();
 	}
@@ -89,29 +101,30 @@ class Gamepad {
 			return s;
 		}
 
-		SDL_GameControllerUpdate();
+		SDL_UpdateGamepads();
 
-		if (!SDL_GameControllerGetAttached(pad_)) { // unplugged
+		if (!SDL_GamepadConnected(pad_)) { // unplugged mid-flight
 			fmt::print(stderr, "pad: disconnected, failsafe\n");
-			SDL_GameControllerClose(pad_);
+			SDL_CloseGamepad(pad_);
 			pad_ = nullptr;
 			gate_.force_disarm();
 			return s;
 		}
 
-		s.roll = norm(axis(SDL_CONTROLLER_AXIS_RIGHTX));
-		s.pitch = -norm(axis(SDL_CONTROLLER_AXIS_RIGHTY)); // up is negative
-		s.yaw = norm(axis(SDL_CONTROLLER_AXIS_LEFTX));
+		s.roll = norm(axis(SDL_GAMEPAD_AXIS_RIGHTX));
+		s.pitch = -norm(axis(SDL_GAMEPAD_AXIS_RIGHTY)); // up is negative
+		s.yaw = norm(axis(SDL_GAMEPAD_AXIS_LEFTX));
 
 		if (mode_ == Throttle::RightTrigger) {
 			// triggers are one-sided 0..32767 and stay where you put them
-			s.throttle = clamp01(axis(SDL_CONTROLLER_AXIS_TRIGGERRIGHT) / 32767.0f);
+			s.throttle = clamp01(axis(SDL_GAMEPAD_AXIS_RIGHT_TRIGGER) / 32767.0f);
 		} else {
-			// spring-centered: rests at 0.5, which is near CF2X hover thrust
-			s.throttle = clamp01((1.0f - axis(SDL_CONTROLLER_AXIS_LEFTY) / 32767.0f) * 0.5f);
+			// spring-centered: rests at 0.5, near CF2X hover thrust
+			s.throttle = clamp01((1.0f - axis(SDL_GAMEPAD_AXIS_LEFTY) / 32767.0f) * 0.5f);
 		}
 
-		s.armed = gate_.update(button(SDL_CONTROLLER_BUTTON_LEFTSHOULDER), button(SDL_CONTROLLER_BUTTON_B), s.throttle);
+		// EAST is the Xbox B button in SDL3's cardinal naming
+		s.armed = gate_.update(button(SDL_GAMEPAD_BUTTON_LEFT_SHOULDER), button(SDL_GAMEPAD_BUTTON_EAST), s.throttle);
 		if (!s.armed)
 			s.throttle = 0.0f;
 
@@ -119,24 +132,29 @@ class Gamepad {
 	}
 
 	static void list() {
-		SDL_SetHint(SDL_HINT_JOYSTICK_ALLOW_BACKGROUND_EVENTS, "1");
-		if (SDL_Init(SDL_INIT_GAMECONTROLLER) != 0) {
+		SDL_SetMainReady();
+		if (!SDL_Init(SDL_INIT_GAMEPAD)) {
 			fmt::print(stderr, "sdl: {}\n", SDL_GetError());
 			return;
 		}
-		for (int i = 0; i < SDL_NumJoysticks(); ++i) {
-			fmt::print("{}: {}{}\n", i, SDL_JoystickNameForIndex(i),
-					   SDL_IsGameController(i) ? "" : "  (not a game controller)");
+		int count = 0;
+		SDL_JoystickID *ids = SDL_GetJoysticks(&count);
+		if (ids) {
+			for (int i = 0; i < count; ++i) {
+				fmt::print("{}: {}{}\n", i, SDL_GetJoystickNameForID(ids[i]),
+						   SDL_IsGamepad(ids[i]) ? "" : "  (not a gamepad)");
+			}
+			SDL_free(ids);
 		}
 		SDL_Quit();
 	}
 
   private:
-	float axis(SDL_GameControllerAxis a) const noexcept {
-		return static_cast<float>(SDL_GameControllerGetAxis(pad_, a));
+	float axis(SDL_GamepadAxis a) const noexcept {
+		return static_cast<float>(SDL_GetGamepadAxis(pad_, a));
 	}
-	bool button(SDL_GameControllerButton b) const noexcept {
-		return SDL_GameControllerGetButton(pad_, b) != 0;
+	bool button(SDL_GamepadButton b) const noexcept {
+		return SDL_GetGamepadButton(pad_, b);
 	}
 
 	static float clamp01(float v) noexcept {
@@ -156,88 +174,10 @@ class Gamepad {
 		return (f > 0.0f) ? (f - kDeadband) / (1.0f - kDeadband) : (f + kDeadband) / (1.0f - kDeadband);
 	}
 
-	SDL_GameController *pad_{nullptr};
+	SDL_Gamepad *pad_{nullptr};
 	bool sdl_ready_{false};
 	Throttle mode_;
 	fc::ArmingGate gate_{};
-};
-
-// -------------------------------------------------------------------
-// byte stream: pipes by default, pty if a device is named.
-//
-// Deliberately not asio or libserialport. Lockstep means one blocking
-// read and one blocking write per iteration, and async machinery would
-// add concepts without removing lines.
-// -------------------------------------------------------------------
-class ByteStream {
-  public:
-	ByteStream() noexcept : rfd_{STDIN_FILENO}, wfd_{STDOUT_FILENO} {
-	}
-
-	explicit ByteStream(const std::string &dev) noexcept {
-		const int fd = ::open(dev.c_str(), O_RDWR | O_NOCTTY);
-		if (fd < 0)
-			return;
-
-		termios t{};
-		if (::tcgetattr(fd, &t) != 0) {
-			::close(fd);
-			return;
-		}
-		::cfmakeraw(&t);
-		::cfsetispeed(&t, B115200);
-		::cfsetospeed(&t, B115200);
-		t.c_cc[VMIN] = 1;
-		t.c_cc[VTIME] = 0;
-		if (::tcsetattr(fd, TCSANOW, &t) != 0) {
-			::close(fd);
-			return;
-		}
-
-		rfd_ = wfd_ = fd;
-		owned_ = true;
-	}
-
-	~ByteStream() {
-		if (owned_ && rfd_ >= 0)
-			::close(rfd_);
-	}
-
-	ByteStream(const ByteStream &) = delete;
-	ByteStream &operator=(const ByteStream &) = delete;
-
-	bool valid() const noexcept {
-		return rfd_ >= 0 && wfd_ >= 0;
-	}
-
-	bool read_exact(void *buf, std::size_t n) noexcept {
-		auto *p = static_cast<std::uint8_t *>(buf);
-		while (n) {
-			const ssize_t r = ::read(rfd_, p, n);
-			if (r <= 0)
-				return false;
-			p += r;
-			n -= static_cast<std::size_t>(r);
-		}
-		return true;
-	}
-
-	bool write_all(const void *buf, std::size_t n) noexcept {
-		const auto *p = static_cast<const std::uint8_t *>(buf);
-		while (n) {
-			const ssize_t w = ::write(wfd_, p, n);
-			if (w <= 0)
-				return false;
-			p += w;
-			n -= static_cast<std::size_t>(w);
-		}
-		return true;
-	}
-
-  private:
-	int rfd_{-1};
-	int wfd_{-1};
-	bool owned_{false};
 };
 
 } // namespace
@@ -245,13 +185,20 @@ class ByteStream {
 // ===================================================================
 
 int main(int argc, char **argv) {
+	// Must happen before any byte moves. On Windows the CRT would
+	// otherwise translate 0x0A to 0x0D 0x0A and corrupt every packet
+	// containing that byte, which floats do constantly.
+	plat::set_binary_stdio();
+
 	CLI::App app{"minimum viable flight controller, lockstep HIL"};
 
 	std::string io_dev;
 	std::string throttle = "stick";
 	bool do_list = false;
 
-	app.add_option("--dev", io_dev, "serial/pty device (default: stdin/stdout pipes)");
+	app.add_option("--dev", io_dev,
+				   "serial device, e.g. COM7 or /dev/ttyUSB0 "
+				   "(default: stdin/stdout pipes)");
 	app.add_option("--throttle", throttle, "throttle source")->check(CLI::IsMember({"stick", "trigger"}));
 	app.add_flag("--list", do_list, "list detected gamepads and exit");
 
@@ -262,7 +209,7 @@ int main(int argc, char **argv) {
 		return 0;
 	}
 
-	ByteStream io = io_dev.empty() ? ByteStream{} : ByteStream{io_dev};
+	plat::ByteStream io = io_dev.empty() ? plat::ByteStream{} : plat::ByteStream{io_dev};
 	if (!io.valid()) {
 		fmt::print(stderr, "io: cannot open {}\n", io_dev);
 		return 1;

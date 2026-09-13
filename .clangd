@@ -6,7 +6,7 @@
 # so "." resolves to build/<preset>/compile_commands.json for whatever you last configured.
 
 CompileFlags:
-  CompilationDatabase: .
+  CompilationDatabase: build/clang-cl-debug
   # clangd parses with its own clang; drop driver-mode flags it can choke on
   # when the DB was produced by clang-cl / MSVC.
   Remove:

@@ -11,8 +11,8 @@ if(CMAKE_SOURCE_DIR STREQUAL CMAKE_CURRENT_SOURCE_DIR)
   # If this project is consumed via add_subdirectory(), the parent owns the provider/toolchain, hence
   # omit this setup_package_maanager(). But because before project(), PROJECT_IS_TOP_LEVEL isn't set yet
   # hence use the source-dir check
-  # set(PKG_MANAGER "conan")
-  set(PKG_MANAGER "vcpkg")
+  set(PKG_MANAGER "conan")
+  # set(PKG_MANAGER "vcpkg")
   
   setup_package_manager() # dispatches to vcpkg / conan / none per PKG_MANAGER
 endif()
@@ -22,7 +22,7 @@ endif()
 #=========================
 include(cmake/version.cmake) # reads version.txt -> PROJECT_VERSION_STRING (before project())
 project(
-  cpp_project_template
+  fc_simulation
   LANGUAGES CXX
   VERSION ${PROJECT_VERSION_STRING})
 
@@ -58,7 +58,7 @@ endif()
 # Dependencies
 #=========================
 find_package(fmt CONFIG REQUIRED)
-find_package(SDL2  CONFIG REQUIRED)
+find_package(SDL3 CONFIG REQUIRED)
 find_package(CLI11 CONFIG REQUIRED)
 
 

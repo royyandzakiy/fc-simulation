@@ -1,8 +1,9 @@
 // fc_core.hpp - flight controller core. No dependencies beyond the freestanding
 // subset of the standard library: no heap, no exceptions, no RTTI, no iostream,
-// no SDL, no fmt. This header compiles for Zephyr on Cortex-M33 unchanged.
+// no SDL, no fmt. Compiler- and OS-agnostic: builds under clang-cl, MSVC, GCC,
+// Clang, and arm-none-eabi for Zephyr on Cortex-M33, all unchanged.
 //
-// Everything platform-specific lives in fc_min.cpp, above this line.
+// Everything platform-specific lives in platform.hpp and fc_min.cpp.
 //
 // Frames are ENU body (x forward, y left, z up). Geometry matches
 // gym-pybullet-drones CF2X (assets/cf2x.urdf, commit 7ebad1e).
@@ -23,7 +24,13 @@ inline constexpr std::uint8_t kSyncSensor = 0xA5;
 inline constexpr std::uint8_t kSyncMotor = 0x5A;
 inline constexpr std::uint8_t kCrcPoly = 0xD5; // CRC-8, same as CRSF
 
-struct [[gnu::packed]] SensorPacket {
+// #pragma pack rather than [[gnu::packed]]: MSVC ignores the attribute
+// outright, which would silently reintroduce padding and desync the wire
+// format from bridge.py. This one spelling is honoured by clang-cl, MSVC,
+// GCC and Clang alike.
+#pragma pack(push, 1)
+
+struct SensorPacket {
 	std::uint8_t sync; // 0xA5
 	std::uint32_t seq;
 	float dt;				   // seconds since last packet
@@ -31,7 +38,7 @@ struct [[gnu::packed]] SensorPacket {
 	std::uint8_t crc;
 };
 
-struct [[gnu::packed]] MotorPacket {
+struct MotorPacket {
 	std::uint8_t sync;		 // 0x5A
 	std::uint32_t seq;		 // echoed back
 	std::array<float, 4> m;	 // 0..1 each
@@ -40,6 +47,9 @@ struct [[gnu::packed]] MotorPacket {
 	std::uint8_t crc;
 };
 
+#pragma pack(pop)
+
+// Fire at compile time if any toolchain reintroduces padding.
 static_assert(sizeof(SensorPacket) == 22, "SensorPacket size");
 static_assert(sizeof(MotorPacket) == 39, "MotorPacket size");
 
