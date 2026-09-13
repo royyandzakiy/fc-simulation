@@ -1,4 +1,4 @@
-# sitl_cpp
+# 5_fc_sitl_cpp
 
 Software in the loop with the **real C++ flight controller**. Same split as
 `scripts/fc_sitl`, but the controller is `fc_simulation` instead of a Python
@@ -23,12 +23,13 @@ cmake --build build/clang-cl-debug
 ```
 
 ```bash
-scripts\3_ctrlaviary_check\.venv\Scripts\python.exe scripts\sitl_cpp\plant.py
+scripts\3_ctrlaviary_check\.venv\Scripts\python.exe scripts\5_fc_sitl_cpp\plant.py
 ```
 
 `plant.py` finds and launches the binary itself â€” the newest `fc_simulation`
 under `bin/` or `build/`, so it picks up whichever toolchain you built last.
-Hold **LB** with the throttle down to arm, **B** to disarm.
+Press **LB** with the throttle down to arm, press it again to disarm. **B** is
+a hard disarm.
 
 | flag | effect |
 | --- | --- |
@@ -40,7 +41,7 @@ Hold **LB** with the throttle down to arm, **B** to disarm.
 Fly it with no hands, for testing:
 
 ```bash
-scripts\3_ctrlaviary_check\.venv\Scripts\python.exe scripts\sitl_cpp\plant.py --no-gui --fc-args=--script=arm-hover
+scripts\3_ctrlaviary_check\.venv\Scripts\python.exe scripts\5_fc_sitl_cpp\plant.py --no-gui --fc-args=--script=arm-hover
 ```
 
 Controller flags worth knowing: `--script arm-hover` / `--script arm-climb-roll`
@@ -103,9 +104,18 @@ frame and an estimator in the controller.
   failure is worth recognising: sampled slower than every step it reads as a
   perfectly *steady* rate, so it passes any test that does not look at
   consecutive samples.
+- **Arming is now a toggle, not hold-to-arm.** `ArmingGate` used to disarm
+  whenever the arm button was not held (`if (panic || !hold_arm) armed_ =
+  false;`), so a tap armed on the press and disarmed again on the release, and
+  staying armed meant holding LB for the whole flight. It now toggles on the
+  press edge — edge-triggered, because at 240 Hz a level test would flip the
+  state 240 times a second. A refused arm (throttle not down) now says so on
+  stderr instead of failing silently.
 - **`--no-pad` and `--script`** added to `main.cpp`, so the loop can be flown
   end to end with no gamepad. Script time comes from the sensor packet's `dt`,
   not a wall clock, so scripted runs stay in lockstep and reproduce exactly.
+  The scripts *tap* the arm control rather than holding it, so they exercise
+  the same path a human does.
 
 Gains were left alone: with the D term fixed, the existing
 `0.10 / 0.20 / 0.0020` (roll, pitch) and `0.20 / 0.10 / 0` (yaw) track a

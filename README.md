@@ -2,6 +2,8 @@
 
 Brief description
 
+![alt text](docs/ss.png)
+
 ## Demo
 
 (working screenshot)
