@@ -241,12 +241,34 @@ class ArmingGate {
   public:
 	static constexpr float kMaxArmThrottle = 0.15f;
 
-	// hold_arm: the arm control is held. panic: a hard-disarm control.
-	bool update(bool hold_arm, bool panic, float throttle) noexcept {
-		if (panic || !hold_arm)
+	// arm_btn: the arm control. panic: a hard-disarm control.
+	//
+	// The arm control TOGGLES on the press edge: press to arm, press again to
+	// disarm. Not hold-to-arm - holding a shoulder button for a whole flight
+	// is not flyable, and a tap would otherwise arm on the press and disarm
+	// again on the release.
+	//
+	// Edge-triggered, not level: at 240 Hz a held button would otherwise flip
+	// the state 240 times a second, and whether you ended up armed would
+	// depend on how long you held it.
+	bool update(bool arm_btn, bool panic, float throttle) noexcept {
+		const bool pressed = arm_btn && !prev_btn_;
+		prev_btn_ = arm_btn;
+		refused_ = false;
+
+		if (panic) {
 			armed_ = false;
-		else if (!armed_ && throttle <= kMaxArmThrottle)
-			armed_ = true;
+		} else if (pressed) {
+			if (armed_) {
+				armed_ = false;
+			} else if (throttle <= kMaxArmThrottle) {
+				armed_ = true;
+			} else {
+				// Refused: arming with the throttle already up would spin the
+				// motors to that setting the instant it takes.
+				refused_ = true;
+			}
+		}
 		return armed_;
 	}
 
@@ -256,9 +278,16 @@ class ArmingGate {
 	bool armed() const noexcept {
 		return armed_;
 	}
+	// True for the one cycle an arm request was rejected, so the caller can
+	// say so. Kept out of the gate itself: this class does no I/O.
+	bool refused() const noexcept {
+		return refused_;
+	}
 
   private:
 	bool armed_{false};
+	bool prev_btn_{false};
+	bool refused_{false};
 };
 
 } // namespace fc

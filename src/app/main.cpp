@@ -164,6 +164,10 @@ class Gamepad {
 
 		// EAST is the Xbox B button in SDL3's cardinal naming
 		s.armed = gate_.update(button(SDL_GAMEPAD_BUTTON_LEFT_SHOULDER), button(SDL_GAMEPAD_BUTTON_EAST), s.throttle);
+		if (gate_.refused()) {
+			fmt::print(stderr, "arm refused - throttle is {:.0f}%, pull it all the way down\n",
+					   static_cast<double>(s.throttle) * 100.0);
+		}
 		if (!s.armed)
 			s.throttle = 0.0f;
 
@@ -428,7 +432,8 @@ int main(int argc, char **argv) {
 	} else if (no_pad) {
 		fmt::print(stderr, "sticks: --no-pad, neutral, never arms\n");
 	} else {
-		fmt::print(stderr, "hold LB to arm from low throttle, B to disarm\n");
+		fmt::print(stderr, "press LB to arm with the throttle down, press again to disarm. "
+						   "B is a hard disarm\n");
 	}
 
 	fc::Controller controller;
