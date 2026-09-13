@@ -14,6 +14,16 @@
 
 #include "fc_core.hpp"
 #include "platform.hpp"
+#include <SDL3/SDL_error.h>
+#include <SDL3/SDL_gamepad.h>
+#include <SDL3/SDL_hints.h>
+#include <SDL3/SDL_init.h>
+#include <SDL3/SDL_joystick.h>
+#include <SDL3/SDL_stdinc.h>
+#include <SDL3/SDL_timer.h>
+#include <array>
+#include <cstdio>
+#include <fmt/base.h>
 
 // SDL3 hijacks main() unless told not to. We want a plain console entry
 // point, so we handle main ourselves and call SDL_SetMainReady().
@@ -100,7 +110,7 @@ class Gamepad {
 	Gamepad(const Gamepad &) = delete;
 	Gamepad &operator=(const Gamepad &) = delete;
 
-	bool present() const noexcept {
+	[[nodiscard]] bool present() const noexcept {
 		return pad_ != nullptr;
 	}
 
@@ -173,39 +183,41 @@ class Gamepad {
 		// ---- triggers: report on full squeeze ----
 		const Sint16 lt = SDL_GetGamepadAxis(pad_, SDL_GAMEPAD_AXIS_LEFT_TRIGGER);
 		const Sint16 rt = SDL_GetGamepadAxis(pad_, SDL_GAMEPAD_AXIS_RIGHT_TRIGGER);
-		if (lt > kAxisMax * kFull && !axis_reported_[SDL_GAMEPAD_AXIS_LEFT_TRIGGER]) {
+		if (static_cast<float>(lt) > kAxisMax * kFull && !axis_reported_.at(SDL_GAMEPAD_AXIS_LEFT_TRIGGER)) {
 			fmt::println("trigger left       MAX ({})", lt);
-			axis_reported_[SDL_GAMEPAD_AXIS_LEFT_TRIGGER] = true;
-		} else if (lt < kAxisMax * kDead) {
-			axis_reported_[SDL_GAMEPAD_AXIS_LEFT_TRIGGER] = false;
+			axis_reported_.at(SDL_GAMEPAD_AXIS_LEFT_TRIGGER) = true;
+		} else if (static_cast<float>(lt) < kAxisMax * kDead) {
+			axis_reported_.at(SDL_GAMEPAD_AXIS_LEFT_TRIGGER) = false;
 		}
-		if (rt > kAxisMax * kFull && !axis_reported_[SDL_GAMEPAD_AXIS_RIGHT_TRIGGER]) {
+		if (static_cast<float>(rt) > kAxisMax * kFull && !axis_reported_.at(SDL_GAMEPAD_AXIS_RIGHT_TRIGGER)) {
 			fmt::println("trigger right      MAX ({})", rt);
-			axis_reported_[SDL_GAMEPAD_AXIS_RIGHT_TRIGGER] = true;
-		} else if (rt < kAxisMax * kDead) {
-			axis_reported_[SDL_GAMEPAD_AXIS_RIGHT_TRIGGER] = false;
+			axis_reported_.at(SDL_GAMEPAD_AXIS_RIGHT_TRIGGER) = true;
+		} else if (static_cast<float>(rt) < kAxisMax * kDead) {
+			axis_reported_.at(SDL_GAMEPAD_AXIS_RIGHT_TRIGGER) = false;
 		}
 
 		// ---- sticks: report per-axis when pushed to max ----
-		struct {
+		struct Sticks {
 			const char *name;
 			SDL_GamepadAxis axis;
-		} sticks[] = {
-			{"left stick  X", SDL_GAMEPAD_AXIS_LEFTX},
-			{"left stick  Y", SDL_GAMEPAD_AXIS_LEFTY},
-			{"right stick X", SDL_GAMEPAD_AXIS_RIGHTX},
-			{"right stick Y", SDL_GAMEPAD_AXIS_RIGHTY},
+		};
+
+		std::array<Sticks, 4> sticks{
+			Sticks{.name = "left stick  X", .axis = SDL_GAMEPAD_AXIS_LEFTX},
+			Sticks{.name = "left stick  Y", .axis = SDL_GAMEPAD_AXIS_LEFTY},
+			Sticks{.name = "right stick X", .axis = SDL_GAMEPAD_AXIS_RIGHTX},
+			Sticks{.name = "right stick Y", .axis = SDL_GAMEPAD_AXIS_RIGHTY},
 		};
 		for (auto &s : sticks) {
-			const float v = SDL_GetGamepadAxis(pad_, s.axis) / 32767.0f;
+			const float v = static_cast<float>(SDL_GetGamepadAxis(pad_, s.axis)) / 32767.0f;
 			const bool full = (v > kFull) || (v < -kFull);
 			const int idx = s.axis; // unique per physical axis
-			if (full && !axis_reported_[idx]) {
+			if (full && !axis_reported_.at(idx)) {
 				const char *dir = (v > 0) ? "+" : "-";
 				fmt::println("axis    {:<14} MAX {} ({:.2f})", s.name, dir, v);
-				axis_reported_[idx] = true;
+				axis_reported_.at(idx) = true;
 			} else if (!full && v > -kDead && v < kDead) {
-				axis_reported_[idx] = false;
+				axis_reported_.at(idx) = false;
 			}
 		}
 	}
@@ -229,10 +241,10 @@ class Gamepad {
 	}
 
   private:
-	float axis(SDL_GamepadAxis a) const noexcept {
+	[[nodiscard]] float axis(SDL_GamepadAxis a) const noexcept {
 		return static_cast<float>(SDL_GetGamepadAxis(pad_, a));
 	}
-	bool button(SDL_GamepadButton b) const noexcept {
+	[[nodiscard]] bool button(SDL_GamepadButton b) const noexcept {
 		return SDL_GetGamepadButton(pad_, b);
 	}
 
@@ -259,30 +271,28 @@ class Gamepad {
 	fc::ArmingGate gate_{};
 
 	// Debug printer state.
-	Btn buttons_[21] = {
-		{"south (A)", SDL_GAMEPAD_BUTTON_SOUTH},
-		{"east (B)", SDL_GAMEPAD_BUTTON_EAST},
-		{"west (X)", SDL_GAMEPAD_BUTTON_WEST},
-		{"north (Y)", SDL_GAMEPAD_BUTTON_NORTH},
-		{"back", SDL_GAMEPAD_BUTTON_BACK},
-		{"guide", SDL_GAMEPAD_BUTTON_GUIDE},
-		{"start", SDL_GAMEPAD_BUTTON_START},
-		{"left stick", SDL_GAMEPAD_BUTTON_LEFT_STICK},
-		{"right stick", SDL_GAMEPAD_BUTTON_RIGHT_STICK},
-		{"left shoulder", SDL_GAMEPAD_BUTTON_LEFT_SHOULDER},
-		{"right shoulder", SDL_GAMEPAD_BUTTON_RIGHT_SHOULDER},
-		{"dpad up", SDL_GAMEPAD_BUTTON_DPAD_UP},
-		{"dpad down", SDL_GAMEPAD_BUTTON_DPAD_DOWN},
-		{"dpad left", SDL_GAMEPAD_BUTTON_DPAD_LEFT},
-		{"dpad right", SDL_GAMEPAD_BUTTON_DPAD_RIGHT},
-		{"misc1", SDL_GAMEPAD_BUTTON_MISC1},
-		{"paddle1", SDL_GAMEPAD_BUTTON_RIGHT_PADDLE1},
-		{"paddle2", SDL_GAMEPAD_BUTTON_LEFT_PADDLE1},
-		{"paddle3", SDL_GAMEPAD_BUTTON_RIGHT_PADDLE2},
-		{"paddle4", SDL_GAMEPAD_BUTTON_LEFT_PADDLE2},
-		{"touchpad", SDL_GAMEPAD_BUTTON_TOUCHPAD},
-	};
-	bool axis_reported_[SDL_GAMEPAD_AXIS_COUNT] = {};
+	std::array<Btn, 21> buttons_{Btn{.name = "south (A)", .id = SDL_GAMEPAD_BUTTON_SOUTH},
+								 Btn{.name = "east (B)", .id = SDL_GAMEPAD_BUTTON_EAST},
+								 Btn{.name = "west (X)", .id = SDL_GAMEPAD_BUTTON_WEST},
+								 Btn{.name = "north (Y)", .id = SDL_GAMEPAD_BUTTON_NORTH},
+								 Btn{.name = "back", .id = SDL_GAMEPAD_BUTTON_BACK},
+								 Btn{.name = "guide", .id = SDL_GAMEPAD_BUTTON_GUIDE},
+								 Btn{.name = "start", .id = SDL_GAMEPAD_BUTTON_START},
+								 Btn{.name = "left stick", .id = SDL_GAMEPAD_BUTTON_LEFT_STICK},
+								 Btn{.name = "right stick", .id = SDL_GAMEPAD_BUTTON_RIGHT_STICK},
+								 Btn{.name = "left shoulder", .id = SDL_GAMEPAD_BUTTON_LEFT_SHOULDER},
+								 Btn{.name = "right shoulder", .id = SDL_GAMEPAD_BUTTON_RIGHT_SHOULDER},
+								 Btn{.name = "dpad up", .id = SDL_GAMEPAD_BUTTON_DPAD_UP},
+								 Btn{.name = "dpad down", .id = SDL_GAMEPAD_BUTTON_DPAD_DOWN},
+								 Btn{.name = "dpad left", .id = SDL_GAMEPAD_BUTTON_DPAD_LEFT},
+								 Btn{.name = "dpad right", .id = SDL_GAMEPAD_BUTTON_DPAD_RIGHT},
+								 Btn{.name = "misc1", .id = SDL_GAMEPAD_BUTTON_MISC1},
+								 Btn{.name = "paddle1", .id = SDL_GAMEPAD_BUTTON_RIGHT_PADDLE1},
+								 Btn{.name = "paddle2", .id = SDL_GAMEPAD_BUTTON_LEFT_PADDLE1},
+								 Btn{.name = "paddle3", .id = SDL_GAMEPAD_BUTTON_RIGHT_PADDLE2},
+								 Btn{.name = "paddle4", .id = SDL_GAMEPAD_BUTTON_LEFT_PADDLE2},
+								 Btn{.name = "touchpad", .id = SDL_GAMEPAD_BUTTON_TOUCHPAD}};
+	std::array<bool, SDL_GAMEPAD_AXIS_COUNT> axis_reported_{};
 };
 
 } // namespace
