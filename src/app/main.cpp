@@ -346,7 +346,7 @@ class ScriptedSticks {
 		}
 
 		s.throttle = throttle;
-		s.armed = gate_.update(hold_arm, false, throttle);
+		s.armed = gate_.update(arm_btn, false, throttle);
 		if (!s.armed)
 			s.throttle = 0.0f;
 		return s;
