@@ -65,8 +65,8 @@ find_package(CLI11 CONFIG REQUIRED)
 #=========================
 # Targets
 #=========================
-# add_subdirectory(src/app)
-add_subdirectory(src/samples/gamepad_btn_test)
+add_subdirectory(src/app)
+# add_subdirectory(src/samples/gamepad_btn_test)
 
 #=========================
 # Tests & Coverage

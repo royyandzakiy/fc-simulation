@@ -26,6 +26,8 @@
 #include <cstdint>
 #include <cstdio>
 #include <fmt/base.h>
+#include <optional>
+#include <utility>
 
 // SDL3 hijacks main() unless told not to. We want a plain console entry
 // point, so we handle main ourselves and call SDL_SetMainReady().
@@ -309,6 +311,47 @@ class Gamepad {
 	std::array<bool, SDL_GAMEPAD_AXIS_COUNT> axis_reported_{};
 };
 
+// ===================================================================
+// Scripted sticks: a canned sequence driven by simulated time, so the
+// loop can be flown end to end with no hands and no gamepad. Time comes
+// from the sensor packet's dt, not a wall clock, so it stays in lockstep
+// and reproduces exactly.
+// ===================================================================
+
+class ScriptedSticks {
+  public:
+	explicit ScriptedSticks(std::string name) noexcept : name_{std::move(name)} {
+	}
+
+	fc::Sticks poll(float dt) noexcept {
+		t_ += dt;
+		fc::Sticks s{};
+
+		// Arming is hold-to-arm, so the arm control stays held throughout.
+		const bool hold_arm = t_ >= 0.5f;
+		float throttle = 0.0f;
+
+		if (name_ == "arm-hover") {
+			throttle = (t_ < 0.6f) ? 0.0f : 0.62f;
+		} else { // arm-climb-roll
+			throttle = (t_ < 0.6f) ? 0.0f : 0.75f;
+			if (t_ >= 3.0f)
+				s.roll = 0.5f;
+		}
+
+		s.throttle = throttle;
+		s.armed = gate_.update(hold_arm, false, throttle);
+		if (!s.armed)
+			s.throttle = 0.0f;
+		return s;
+	}
+
+  private:
+	std::string name_;
+	float t_{0.0f};
+	fc::ArmingGate gate_{};
+};
+
 } // namespace
 
 // ===================================================================
@@ -323,8 +366,10 @@ int main(int argc, char **argv) {
 
 	std::string io_dev;
 	std::string throttle = "stick";
+	std::string script;
 	bool do_list = false;
 	bool debug_pad = false;
+	bool no_pad = false;
 
 	app.add_option("--dev", io_dev,
 				   "serial device, e.g. COM7 or /dev/ttyUSB0 "
@@ -333,6 +378,11 @@ int main(int argc, char **argv) {
 	app.add_flag("--list", do_list, "list detected gamepads and exit");
 	app.add_flag("--debug-pad", debug_pad,
 				 "stream gamepad state to the console instead of flying");
+	app.add_flag("--no-pad", no_pad, "ignore any gamepad: neutral sticks, never arms");
+	app.add_option("--script", script,
+				   "fly a canned stick sequence instead of a gamepad "
+				   "(arm-climb-roll, arm-hover), for testing without hands")
+		->check(CLI::IsMember({"arm-climb-roll", "arm-hover"}));
 
 	CLI11_PARSE(app, argc, argv);
 
@@ -370,7 +420,16 @@ int main(int argc, char **argv) {
 	}
 
 	fmt::print(stderr, "io: {}   throttle: {}\n", io_dev.empty() ? "stdin/stdout" : io_dev, throttle);
-	fmt::print(stderr, "hold LB to arm from low throttle, B to disarm\n");
+
+	std::optional<ScriptedSticks> scripted;
+	if (!script.empty()) {
+		scripted.emplace(script);
+		fmt::print(stderr, "sticks: script {}\n", script);
+	} else if (no_pad) {
+		fmt::print(stderr, "sticks: --no-pad, neutral, never arms\n");
+	} else {
+		fmt::print(stderr, "hold LB to arm from low throttle, B to disarm\n");
+	}
 
 	fc::Controller controller;
 	bool was_armed = false;
@@ -394,7 +453,7 @@ int main(int argc, char **argv) {
 			continue;
 		}
 
-		const fc::Sticks rc = pad.poll();
+		const fc::Sticks rc = scripted ? scripted->poll(s.dt) : (no_pad ? fc::Sticks{} : pad.poll());
 
 		if (rc.armed != was_armed) {
 			fmt::print(stderr, "{}\n", rc.armed ? "ARMED" : "disarmed");

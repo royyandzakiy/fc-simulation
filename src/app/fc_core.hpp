@@ -90,29 +90,52 @@ class RatePid {
 	constexpr RatePid(float kp, float ki, float kd) noexcept : kp_{kp}, ki_{ki}, kd_{kd} {
 	}
 
-	float step(float err, float dt) noexcept {
+	// Setpoint and measurement separately, rather than a pre-computed error,
+	// because the D term needs the measurement on its own. See below.
+	float step(float setpoint, float meas, float dt) noexcept {
+		const float err = setpoint - meas;
+
 		integ_ += err * dt;
 		if (integ_ > kILimit)
 			integ_ = kILimit;
 		if (integ_ < -kILimit)
 			integ_ = -kILimit;
 
-		const float d = (dt > 1e-6f) ? (err - prev_err_) / dt : 0.0f;
-		prev_err_ = err;
+		// Derivative on the MEASUREMENT, not on the error. The two agree
+		// while the setpoint is steady, but differentiating the error puts a
+		// spike of (stick_step / dt) through D the instant a stick moves,
+		// which slams all four motors to their rails for one cycle.
+		// Betaflight does the same thing for the same reason.
+		float d = 0.0f;
+		if (have_prev_ && dt > 1e-6f) {
+			d = -(meas - prev_meas_) / dt;
+		}
+		prev_meas_ = meas;
+		have_prev_ = true;
 
-		return kp_ * err + ki_ * integ_ + kd_ * d;
+		// Low-pass the derivative. Unfiltered it amplifies step-to-step gyro
+		// noise until the loop oscillates at the sample rate - which reads as
+		// a perfectly steady rate unless you look at consecutive samples.
+		d_filt_ += kDLpf * (d - d_filt_);
+
+		return kp_ * err + ki_ * integ_ + kd_ * d_filt_;
 	}
 
 	void reset() noexcept {
 		integ_ = 0.0f;
-		prev_err_ = 0.0f;
+		prev_meas_ = 0.0f;
+		have_prev_ = false;
+		d_filt_ = 0.0f;
 	}
 
   private:
 	static constexpr float kILimit = 0.3f;
+	static constexpr float kDLpf = 0.08f; // fraction of the new sample kept
 	float kp_, ki_, kd_;
 	float integ_{0.0f};
-	float prev_err_{0.0f};
+	float prev_meas_{0.0f};
+	bool have_prev_{false};
+	float d_filt_{0.0f};
 };
 
 // ===================================================================
@@ -188,7 +211,7 @@ class Controller {
 			const std::array<float, 3> sp = {rc.roll, rc.pitch, rc.yaw};
 			std::array<float, 3> pid{};
 			for (std::size_t a = 0; a < 3; ++a) {
-				pid[a] = pid_[a].step(sp[a] * kMaxRateRps - s.gyro[a], s.dt);
+				pid[a] = pid_[a].step(sp[a] * kMaxRateRps, s.gyro[a], s.dt);
 			}
 			out.m = Mixer::apply(rc.throttle, pid);
 		}
