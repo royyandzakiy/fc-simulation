@@ -54,12 +54,13 @@ declares `>=3.12` while the package is pure Python and runs fine on 3.11.
 
 Needs `git` on PATH for that second install.
 
-## Two samples
+## Three samples
 
 | script | what is new | who decides the motors |
 | --- | --- | --- |
 | `plant_demo.py` | the environment layer | a fixed schedule in the code |
 | `pad_demo.py` | the gamepad | you, arming and disarming live |
+| `fly_demo.py` | the sticks, stabilised mode | you, flying it |
 
 ## plant_demo.py
 
@@ -148,6 +149,49 @@ throttle stick wired up yet, so idling would make arming invisible.
 Windows-only, and XInput sees Xbox-style pads only - the same limits as
 `scripts/gamepad_test`.
 
+## fly_demo.py
+
+Actually fly it. `pad_demo.py` could only arm and disarm; here the sticks mean
+something.
+
+```bash
+scripts\ctrlaviary_check\.venv\Scripts\python.exe scripts\ctrlaviary_checkly_demo.py
+```
+
+| control | does |
+| --- | --- |
+| left stick up/down | throttle - **fully down is zero** |
+| left stick left/right | yaw rate |
+| right stick left/right | roll angle |
+| right stick up/down | pitch angle |
+| LB | arm / disarm |
+
+**Arming is refused unless the throttle stick is all the way down**, so a stick
+left half-up cannot spin the motors the instant you press LB:
+
+```
+t=  2.3s  arm refused - throttle is 62%, pull it all the way down
+```
+
+### Stabilised, not acro
+
+The right stick commands an **angle**, not a rotation rate. Full deflection
+asks for 30 degrees of bank; centre the stick and the drone returns to level by
+itself. In acro the same stick would command a *rate*, and centring it would
+only stop the rotation, leaving the drone tilted wherever it happened to be.
+
+Throttle maps zero at the bottom of the stick travel to full at the top, so
+hover sits around 64%. Note a gamepad stick springs back to **centre**, not to
+the bottom - let go and you are at 50% throttle, not idle. A real transmitter
+has a throttle stick that stays where you put it.
+
+### What to expect
+
+There is no altitude hold - this is stabilised, not position mode. Tilt costs
+lift, so at hover throttle a 30 degree bank makes it sink and land. Feed in more
+throttle when you lean it over. That is not a bug in the demo, it is what the
+mode does, and it is the reason the next mode up exists.
+
 ## What this validates for `hil_bridge`
 
 - `gym-pybullet-drones` imports and runs on 3.11 despite its `>=3.12` pin
@@ -160,6 +204,7 @@ Windows-only, and XInput sees Xbox-style pads only - the same limits as
 
 ## Not here
 
-Stick-to-attitude mapping, any actual flight control, the CRC packet format,
-the subprocess link to `fc_simulation`, and rerun. Those are
-`scripts/hil_bridge`.
+The CRC packet format, the subprocess link to `fc_simulation`, and rerun -
+those are `scripts/hil_bridge`. The control law in `fly_demo.py` is Python
+standing in for the firmware; wiring up the real thing means replacing that
+block with packets, not rewriting the plant.
