@@ -1,4 +1,5 @@
-- make a 2d side scroller, scrolls to the left. just simple red box. movable by keyboard
-    - randomly generates blocks that flies to the left
-    - create collisions, then gameover
-    - create score based on time
+- make the fc to rcv the sensor and show it in logs
+- make the fc send motor packet out
+    - fc reads the joystick (arm, throttle, maneuver)
+    - sim reads the motor packet and translates
+    - fc fly follows sensor readings
