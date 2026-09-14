@@ -316,6 +316,168 @@ class Gamepad {
 };
 
 // ===================================================================
+// Radio - a transmitter in USB HID joystick mode.
+//
+// Not a gamepad. SDL_GetGamepads() only returns devices it has a mapping
+// for in its controller database, and a radio has no entry there, so it
+// never shows up that way. The joystick API sees it as what it is: a
+// pile of unlabelled axes.
+//
+// Which axis is which depends on the model config in the radio (AETR vs
+// TAER and so on), so the mapping is flags rather than a guess. Use
+// --debug-pad --input joystick to find out what yours reports.
+// ===================================================================
+
+class Radio {
+  public:
+	struct Map {
+		int roll{0};
+		int pitch{1};
+		int throttle{2};
+		int yaw{3};
+		int arm{4};
+		float arm_threshold{0.5f};
+	};
+
+	explicit Radio(Map m) noexcept : map_{m} {
+		SDL_SetHint(SDL_HINT_JOYSTICK_ALLOW_BACKGROUND_EVENTS, "1");
+		SDL_SetMainReady();
+
+		if (!SDL_Init(SDL_INIT_JOYSTICK)) {
+			fmt::print(stderr, "sdl: init failed: {}\n", SDL_GetError());
+			return;
+		}
+		sdl_ready_ = true;
+
+		int count = 0;
+		SDL_JoystickID *ids = SDL_GetJoysticks(&count);
+		if (ids) {
+			for (int i = 0; i < count; ++i) {
+				js_ = SDL_OpenJoystick(ids[i]);
+				if (js_) {
+					fmt::print(stderr, "radio: {} ({} axes)\n", SDL_GetJoystickName(js_),
+							   SDL_GetNumJoystickAxes(js_));
+					break;
+				}
+			}
+			SDL_free(ids);
+		}
+		if (!js_)
+			fmt::print(stderr, "radio: none found, staying disarmed\n");
+	}
+
+	~Radio() {
+		if (js_)
+			SDL_CloseJoystick(js_);
+		if (sdl_ready_)
+			SDL_Quit();
+	}
+
+	Radio(const Radio &) = delete;
+	Radio &operator=(const Radio &) = delete;
+
+	[[nodiscard]] bool present() const noexcept {
+		return js_ != nullptr;
+	}
+
+	fc::Sticks poll() noexcept {
+		fc::Sticks s{};
+		if (!js_) {
+			gate_.force_disarm();
+			return s;
+		}
+
+		pump();
+
+		if (!SDL_JoystickConnected(js_)) {
+			fmt::print(stderr, "radio: disconnected, failsafe\n");
+			SDL_CloseJoystick(js_);
+			js_ = nullptr;
+			gate_.force_disarm();
+			return s;
+		}
+
+		s.roll = norm(axis(map_.roll));
+		s.pitch = norm(axis(map_.pitch));
+		s.yaw = norm(axis(map_.yaw));
+
+		// A radio throttle does not self-centre, so it gets the full travel
+		// with no centre dead band: stick down is zero, stick up is full.
+		s.throttle = clamp01((axis(map_.throttle) + 1.0f) * 0.5f);
+
+		// Arming is a switch that holds its own position, not a button, so
+		// this is level-triggered.
+		const bool arm_sw = axis(map_.arm) > map_.arm_threshold;
+		s.armed = gate_.update_level(arm_sw, false, s.throttle);
+		if (gate_.refused()) {
+			fmt::print(stderr, "arm refused - throttle is {:.0f}%, bring it down first\n",
+					   static_cast<double>(s.throttle) * 100.0);
+		}
+		if (!s.armed)
+			s.throttle = 0.0f;
+
+		return s;
+	}
+
+	// Every axis, live. This is how you find out which channel is which.
+	void debug_print() noexcept {
+		if (!js_)
+			return;
+		pump();
+		if (!SDL_JoystickConnected(js_)) {
+			fmt::println("radio: disconnected");
+			return;
+		}
+		const int n = SDL_GetNumJoystickAxes(js_);
+		std::string line;
+		for (int i = 0; i < n; ++i) {
+			line += fmt::format("a{}={:+.2f}  ", i, static_cast<double>(axis(i)));
+		}
+		fmt::print("\r{}", line);
+		std::fflush(stdout);
+	}
+
+	static void pump() noexcept {
+		SDL_Event e;
+		while (SDL_PollEvent(&e)) {
+		}
+		SDL_UpdateJoysticks();
+	}
+
+  private:
+	// Raw axis as -1..1. Out-of-range indices read as centred rather than
+	// crashing, so a bad --ch-* flag is a dead channel and not a fault.
+	[[nodiscard]] float axis(int idx) const noexcept {
+		if (!js_ || idx < 0 || idx >= SDL_GetNumJoystickAxes(js_))
+			return 0.0f;
+		float f = static_cast<float>(SDL_GetJoystickAxis(js_, idx)) / 32767.0f;
+		if (f > 1.0f)
+			f = 1.0f;
+		if (f < -1.0f)
+			f = -1.0f;
+		return f;
+	}
+
+	static float clamp01(float v) noexcept {
+		return (v < 0.0f) ? 0.0f : (v > 1.0f) ? 1.0f : v;
+	}
+
+	// The radio has already calibrated and trimmed its own sticks, so this
+	// only needs to kill the last bit of jitter around centre.
+	static float norm(float f) noexcept {
+		constexpr float kDead = 0.03f;
+		if (f > -kDead && f < kDead)
+			return 0.0f;
+		return (f > 0.0f) ? (f - kDead) / (1.0f - kDead) : (f + kDead) / (1.0f - kDead);
+	}
+
+	SDL_Joystick *js_{nullptr};
+	bool sdl_ready_{false};
+	Map map_;
+	fc::ArmingGate gate_{};
+};
+
+// ===================================================================
 // Scripted sticks: a canned sequence driven by simulated time, so the
 // loop can be flown end to end with no hands and no gamepad. Time comes
 // from the sensor packet's dt, not a wall clock, so it stays in lockstep
@@ -373,6 +535,9 @@ int main(int argc, char **argv) {
 	std::string io_dev;
 	std::string throttle = "stick";
 	std::string script;
+	std::string input = "auto";
+	int baud = 115200;
+	Radio::Map chmap{};
 	bool do_list = false;
 	bool debug_pad = false;
 	bool no_pad = false;
@@ -381,10 +546,26 @@ int main(int argc, char **argv) {
 				   "serial device, e.g. COM7 or /dev/ttyUSB0 "
 				   "(default: stdin/stdout pipes)");
 	app.add_option("--throttle", throttle, "throttle source")->check(CLI::IsMember({"stick", "trigger"}));
+	app.add_option("--baud", baud,
+				   "serial rate for --dev. 115200 cannot carry 240 Hz lockstep: "
+				   "22 B out plus 39 B back serialises to 5.3 ms per exchange, "
+				   "against a 4.17 ms period. 230400 is the first rate that fits")
+		->capture_default_str();
 	app.add_flag("--list", do_list, "list detected gamepads and exit");
 	app.add_flag("--debug-pad", debug_pad,
 				 "stream gamepad state to the console instead of flying");
 	app.add_flag("--no-pad", no_pad, "ignore any gamepad: neutral sticks, never arms");
+	app.add_option("--input", input,
+				   "stick source: auto (gamepad, else radio), gamepad, joystick")
+		->check(CLI::IsMember({"auto", "gamepad", "joystick"}));
+	app.add_option("--ch-roll", chmap.roll, "radio axis carrying roll")->capture_default_str();
+	app.add_option("--ch-pitch", chmap.pitch, "radio axis carrying pitch")->capture_default_str();
+	app.add_option("--ch-throttle", chmap.throttle, "radio axis carrying throttle")->capture_default_str();
+	app.add_option("--ch-yaw", chmap.yaw, "radio axis carrying yaw")->capture_default_str();
+	app.add_option("--ch-arm", chmap.arm, "radio axis carrying the arm switch")->capture_default_str();
+	app.add_option("--arm-threshold", chmap.arm_threshold,
+				   "arm switch counts as up above this (-1..1)")
+		->capture_default_str();
 	app.add_option("--script", script,
 				   "fly a canned stick sequence instead of a gamepad "
 				   "(arm-climb-roll, arm-hover), for testing without hands")
@@ -397,7 +578,26 @@ int main(int argc, char **argv) {
 		return 0;
 	}
 
-	Gamepad pad{throttle == "trigger" ? Gamepad::Throttle::RightTrigger : Gamepad::Throttle::LeftStick};
+	// Pick the stick source. Only one of these is ever alive, because each
+	// owns its own SDL init and teardown.
+	//
+	// auto prefers a mapped gamepad and falls back to a bare joystick, which
+	// is what a transmitter in USB HID mode looks like.
+	std::optional<Gamepad> pad;
+	std::optional<Radio> radio;
+
+	if (!no_pad && script.empty()) {
+		if (input != "joystick") {
+			pad.emplace(throttle == "trigger" ? Gamepad::Throttle::RightTrigger
+											  : Gamepad::Throttle::LeftStick);
+			if (!pad->present() && input == "auto") {
+				pad.reset(); // releases SDL before the radio claims it
+				radio.emplace(chmap);
+			}
+		} else {
+			radio.emplace(chmap);
+		}
+	}
 
 	fmt::println(stderr, "throttle: {}", throttle);
 
@@ -410,7 +610,10 @@ int main(int argc, char **argv) {
 	if (debug_pad) {
 		fmt::println(stderr, "press buttons / push sticks to max, Ctrl+C to quit\n");
 		for (;;) {
-			pad.debug_print();
+			if (radio)
+				radio->debug_print(); // every axis, to find your channel numbers
+			else if (pad)
+				pad->debug_print();
 			SDL_Delay(8); // ~120 Hz poll for snappy button edges
 		}
 	}
@@ -419,7 +622,7 @@ int main(int argc, char **argv) {
 	// Lockstep loop: one motor packet out per sensor packet in.
 	// ---------------------------------------------------------------
 
-	plat::ByteStream io = io_dev.empty() ? plat::ByteStream{} : plat::ByteStream{io_dev};
+	plat::ByteStream io = io_dev.empty() ? plat::ByteStream{} : plat::ByteStream{io_dev, baud};
 	if (!io.valid()) {
 		fmt::print(stderr, "io: cannot open {}\n", io_dev);
 		return 1;
@@ -433,7 +636,14 @@ int main(int argc, char **argv) {
 		fmt::print(stderr, "sticks: script {}\n", script);
 	} else if (no_pad) {
 		fmt::print(stderr, "sticks: --no-pad, neutral, never arms\n");
-	} else {
+	} else if (radio) {
+		fmt::print(stderr,
+				   "sticks: radio  roll=a{} pitch=a{} throttle=a{} yaw=a{} arm=a{} (>{:.2f})\n",
+				   chmap.roll, chmap.pitch, chmap.throttle, chmap.yaw, chmap.arm,
+				   static_cast<double>(chmap.arm_threshold));
+		fmt::print(stderr, "flip the arm switch up with the throttle down to arm, "
+						   "down to disarm\n");
+	} else if (pad) {
 		fmt::print(stderr, "press LB to arm with the throttle down, press again to disarm. "
 						   "B is a hard disarm\n");
 	}
@@ -460,7 +670,10 @@ int main(int argc, char **argv) {
 			continue;
 		}
 
-		const fc::Sticks rc = scripted ? scripted->poll(s.dt) : (no_pad ? fc::Sticks{} : pad.poll());
+		const fc::Sticks rc = scripted  ? scripted->poll(s.dt)
+							  : radio   ? radio->poll()
+							  : pad     ? pad->poll()
+										: fc::Sticks{}; // --no-pad, or nothing plugged in
 
 		if (rc.armed != was_armed) {
 			fmt::print(stderr, "{}\n", rc.armed ? "ARMED" : "disarmed");

@@ -57,7 +57,7 @@ class ByteStream {
 	ByteStream() noexcept : rh_{::GetStdHandle(STD_INPUT_HANDLE)}, wh_{::GetStdHandle(STD_OUTPUT_HANDLE)} {
 	}
 
-	explicit ByteStream(const std::string &dev) noexcept {
+	explicit ByteStream(const std::string &dev, int baud = 115200) noexcept {
 		// COM10+ is unreachable without the device-namespace prefix
 		std::string path = dev;
 		if (path.rfind("\\\\.\\", 0) != 0 && (path.rfind("COM", 0) == 0 || path.rfind("com", 0) == 0)) {
@@ -75,7 +75,9 @@ class ByteStream {
 			return;
 		}
 
-		dcb.BaudRate = CBR_115200;
+		// Windows takes the rate as a plain integer, unlike the POSIX Bxxxxx
+		// constants, so no lookup table is needed on this side.
+		dcb.BaudRate = static_cast<DWORD>(baud);
 		dcb.ByteSize = 8;
 		dcb.Parity = NOPARITY;
 		dcb.StopBits = ONESTOPBIT;
@@ -139,7 +141,36 @@ class ByteStream {
 	ByteStream() noexcept : rfd_{STDIN_FILENO}, wfd_{STDOUT_FILENO} {
 	}
 
-	explicit ByteStream(const std::string &dev) noexcept {
+	// The Bxxxxx constants are opaque values, not the integers they are named
+	// after, so a table is the only way to turn a --baud number into one.
+	static speed_t baud_constant(int baud) noexcept {
+		switch (baud) {
+		case 9600:
+			return B9600;
+		case 19200:
+			return B19200;
+		case 38400:
+			return B38400;
+		case 57600:
+			return B57600;
+		case 115200:
+			return B115200;
+		case 230400:
+			return B230400;
+		case 460800:
+			return B460800;
+		case 921600:
+			return B921600;
+		default:
+			return 0; // caller reports it; 0 would otherwise mean hang up
+		}
+	}
+
+	explicit ByteStream(const std::string &dev, int baud = 115200) noexcept {
+		const speed_t speed = baud_constant(baud);
+		if (speed == 0)
+			return;
+
 		const int fd = ::open(dev.c_str(), O_RDWR | O_NOCTTY);
 		if (fd < 0)
 			return;
@@ -149,9 +180,14 @@ class ByteStream {
 			::close(fd);
 			return;
 		}
+		// Raw mode is not optional here. A tty defaults to canonical mode with
+		// echo, CR/LF translation and XON/XOFF flow control, and these frames
+		// carry float bytes that hit 0x11 and 0x13 constantly - software flow
+		// control would silently pause the link on them. This is the POSIX
+		// counterpart of set_binary_stdio() above.
 		::cfmakeraw(&t);
-		::cfsetispeed(&t, B115200);
-		::cfsetospeed(&t, B115200);
+		::cfsetispeed(&t, speed);
+		::cfsetospeed(&t, speed);
 		t.c_cc[VMIN] = 1;
 		t.c_cc[VTIME] = 0;
 		if (::tcsetattr(fd, TCSANOW, &t) != 0) {

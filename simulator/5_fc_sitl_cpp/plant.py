@@ -2,10 +2,10 @@
 """The world and the IMU, talking to the C++ flight controller.
 
 Same split as scripts/fc_sitl, but the controller is the real
-`fc_simulation` binary instead of a Python stand-in, and the link is the
+`fc_sitl_cpp` binary instead of a Python stand-in, and the link is the
 binary CRC framing declared in src/app/fc_core.hpp rather than JSON.
 
-    plant.py                                 fc_simulation.exe
+    plant.py                                 fc_sitl_cpp.exe
     ---------------------------              ---------------------------
     pybullet world (CtrlAviary)              rate PID + mixer, acro
     the "IMU": derives body rates  --0xA5-->
@@ -37,18 +37,18 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 
 
 def find_fc():
-    """Newest fc_simulation binary under bin/ or build/.
+    """Newest fc_sitl_cpp binary under bin/ or build/.
 
     Newest rather than first so it picks up whichever toolchain you built
     last, instead of a stale binary from another compiler.
     """
-    names = ("fc_simulation.exe", "fc_simulation")
+    names = ("fc_sitl_cpp.exe", "fc_sitl_cpp")
     found = [p for root in ("bin", "build")
              for name in names
              for p in (REPO_ROOT / root).rglob(name) if p.is_file()]
     if not found:
         raise SystemExit(
-            "fc_simulation not found. Build it first:\n"
+            "fc_sitl_cpp not found. Build it first:\n"
             "  cmake --build build/clang-cl-debug\n"
             "(check add_subdirectory(src/app) is enabled in CMakeLists.txt)\n"
             "or point at it with --fc <path>.")

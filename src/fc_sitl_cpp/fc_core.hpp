@@ -272,6 +272,39 @@ class ArmingGate {
 		return armed_;
 	}
 
+	// Level-triggered arming, for a physical switch rather than a button.
+	//
+	// A radio arms on an AUX channel: switch up is armed, switch down is
+	// disarmed, and the switch holds its own state. Toggling on the edge would
+	// be wrong here, because flicking the switch down and up again would leave
+	// the two out of sync and the software could end up armed with the switch
+	// physically down.
+	//
+	// The throttle gate still applies, but only to the arming transition.
+	bool update_level(bool arm_sw, bool panic, float throttle) noexcept {
+		refused_ = false;
+
+		if (panic || !arm_sw) {
+			armed_ = false;
+			seen_low_ = true; // the switch has been observed in the safe position
+		} else if (!armed_ && !prev_sw_) {
+			// Rising edge of the switch. seen_low_ is what stops a switch that
+			// is ALREADY up when the link comes alive from arming on the first
+			// poll: prev_sw_ starts false, so without this the first sample
+			// looks like an edge. A real aircraft would spin up the instant it
+			// was plugged in. You have to cycle the switch down and back up.
+			if (!seen_low_) {
+				refused_ = true;
+			} else if (throttle <= kMaxArmThrottle) {
+				armed_ = true;
+			} else {
+				refused_ = true;
+			}
+		}
+		prev_sw_ = arm_sw;
+		return armed_;
+	}
+
 	void force_disarm() noexcept {
 		armed_ = false;
 	}
@@ -286,7 +319,9 @@ class ArmingGate {
 
   private:
 	bool armed_{false};
-	bool prev_btn_{false};
+	bool prev_btn_{false}; // update(), edge-triggered button
+	bool prev_sw_{false};  // update_level(), physical switch
+	bool seen_low_{false}; // switch observed down at least once since boot
 	bool refused_{false};
 };
 

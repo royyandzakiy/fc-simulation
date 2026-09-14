@@ -11,7 +11,7 @@ thing it would see wired to a real board.
 
 ```
 plant: CF2X at 240 Hz
-controller: bin\clang-cl\fc_simulation.exe
+controller: bin\clang-cl\fc_sitl_cpp.exe
 acro mode - it will NOT self-level. Ctrl+C to quit.
 
 t=  0.0s --- thr=0.00 z=  0.11 m  roll=  +0.0 pitch=  -0.0 deg  m=['0.00','0.00','0.00','0.00']
@@ -84,7 +84,7 @@ step.
 | 2 | none | none | none | **read the pad** |
 | 3 | **CtrlAviary, CF2X, motor RPM** | Python, stabilised | none | **both sticks** |
 | 4 | CtrlAviary | Python, acro | **JSON lines over a pipe** | pad, owned by the controller |
-| 5 | CtrlAviary | **C++ `fc_simulation`** | **binary + CRC-8** | pad over SDL3 |
+| 5 | CtrlAviary | **C++ `fc_sitl_cpp`** | **binary + CRC-8** | pad over SDL3 |
 
 Step 3 is where the interface stops being invented: `CtrlAviary` owns the
 mixer, so the controller's job becomes producing four motor demands, which is

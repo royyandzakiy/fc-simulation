@@ -1,11 +1,11 @@
 # 5. The real C++ controller in the loop
 
 Same split as [step 4](../4_fc_sitl_py/README.md), except the controller is the
-actual `fc_simulation` binary from `src/fc_sitl_cpp/`, and the link is the binary CRC
+actual `fc_sitl_cpp` binary from `src/fc_sitl_cpp/`, and the link is the binary CRC
 framing declared in `src/fc_sitl_cpp/fc_core.hpp` instead of JSON.
 
 ```
-  plant.py                                 fc_simulation.exe
+  plant.py                                 fc_sitl_cpp.exe
   ---------------------------              ---------------------------
   pybullet world (CtrlAviary)              rate PID + mixer, acro
   the "IMU": derives body rates  --0xA5-->
@@ -24,7 +24,7 @@ Build the firmware first, then:
 ```
 
 `plant.py` finds and launches the binary itself, taking the newest
-`fc_simulation` under `bin/` or `build/`, so it picks up whichever toolchain you
+`fc_sitl_cpp` under `bin/` or `build/`, so it picks up whichever toolchain you
 built last. Press LB with the throttle down to arm, press again to disarm. B is
 a hard disarm.
 
@@ -73,7 +73,7 @@ sensor frame carries body rates and nothing else.
 ## What this needed in src/fc_sitl_cpp
 
 - **`add_subdirectory(src/fc_sitl_cpp)` was commented out** in the root `CMakeLists.txt`,
-  so `fc_simulation` was not being built at all. `cmake --build` reported
+  so `fc_sitl_cpp` was not being built at all. `cmake --build` reported
   success while doing nothing and the stale binary sat in `bin/`.
 - **Arming is a toggle now, not hold-to-arm.** `ArmingGate` used to disarm
   whenever the arm button was not held, so a tap armed on the press and
