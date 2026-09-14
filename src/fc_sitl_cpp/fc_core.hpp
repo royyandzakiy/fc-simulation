@@ -281,27 +281,47 @@ class ArmingGate {
 	// physically down.
 	//
 	// The throttle gate still applies, but only to the arming transition.
-	bool update_level(bool arm_sw, bool panic, float throttle) noexcept {
+	// The switch must be held up for arm_hold seconds before this arms.
+	// Disarm is immediate, see below.
+	void set_arm_hold(float seconds) noexcept {
+		arm_hold_s_ = (seconds > 0.0f) ? seconds : 0.0f;
+	}
+
+	bool update_level(bool arm_sw, bool panic, float throttle, float dt) noexcept {
 		refused_ = false;
 
 		if (panic || !arm_sw) {
+			// Disarm is immediate and never debounced. A delay in THIS
+			// direction means the motors keep running after the pilot has
+			// already flipped the switch off, so the hold below deliberately
+			// applies to arming only.
 			armed_ = false;
 			seen_low_ = true; // the switch has been observed in the safe position
-		} else if (!armed_ && !prev_sw_) {
-			// Rising edge of the switch. seen_low_ is what stops a switch that
-			// is ALREADY up when the link comes alive from arming on the first
-			// poll: prev_sw_ starts false, so without this the first sample
-			// looks like an edge. A real aircraft would spin up the instant it
-			// was plugged in. You have to cycle the switch down and back up.
-			if (!seen_low_) {
-				refused_ = true;
-			} else if (throttle <= kMaxArmThrottle) {
-				armed_ = true;
-			} else {
-				refused_ = true;
-			}
+			high_for_ = 0.0f;
+			decided_ = false;
+			return armed_;
 		}
-		prev_sw_ = arm_sw;
+
+		// Switch is up. Require it to stay up for a while before arming, so a
+		// noisy or bouncing channel cannot flicker the motors on and off.
+		high_for_ += dt;
+		if (armed_ || decided_ || high_for_ < arm_hold_s_) {
+			return armed_;
+		}
+
+		// Decide once per flip, otherwise a refusal would be reported on every
+		// cycle for as long as the switch is held.
+		decided_ = true;
+		if (!seen_low_) {
+			// The switch was ALREADY up when the link came alive. Arming here
+			// would spin a real aircraft up the instant it was plugged in, so
+			// it has to be cycled down and back up first.
+			refused_ = true;
+		} else if (throttle <= kMaxArmThrottle) {
+			armed_ = true;
+		} else {
+			refused_ = true;
+		}
 		return armed_;
 	}
 
@@ -321,6 +341,9 @@ class ArmingGate {
 	bool armed_{false};
 	bool prev_btn_{false}; // update(), edge-triggered button
 	bool prev_sw_{false};  // update_level(), physical switch
+	float arm_hold_s_{0.2f};  // switch must stay up this long to arm
+	float high_for_{0.0f};    // how long it has been up
+	bool decided_{false};     // this flip has already been judged
 	bool seen_low_{false}; // switch observed down at least once since boot
 	bool refused_{false};
 };

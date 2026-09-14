@@ -80,6 +80,12 @@ class Gamepad {
 		// of input focus. This hint is what makes headless work.
 		SDL_SetHint(SDL_HINT_JOYSTICK_ALLOW_BACKGROUND_EVENTS, "1");
 
+		// SDL enumerates joysticks through udev on Linux, and WSL runs no udev,
+		// so without this it finds nothing at all even though /dev/input/js0 is
+		// sitting right there. Makes SDL scan /dev/input directly. Ignored on
+		// platforms where it does not apply.
+		SDL_SetHint(SDL_HINT_JOYSTICK_LINUX_CLASSIC, "1");
+
 		SDL_SetMainReady();
 
 		if (!SDL_Init(SDL_INIT_GAMEPAD)) { // SDL3: true means success
@@ -337,10 +343,18 @@ class Radio {
 		int yaw{3};
 		int arm{4};
 		float arm_threshold{0.5f};
+		float arm_hold_s{0.2f};
 	};
 
 	explicit Radio(Map m) noexcept : map_{m} {
+		gate_.set_arm_hold(map_.arm_hold_s);
 		SDL_SetHint(SDL_HINT_JOYSTICK_ALLOW_BACKGROUND_EVENTS, "1");
+
+		// SDL enumerates joysticks through udev on Linux, and WSL runs no udev,
+		// so without this it finds nothing at all even though /dev/input/js0 is
+		// sitting right there. Makes SDL scan /dev/input directly. Ignored on
+		// platforms where it does not apply.
+		SDL_SetHint(SDL_HINT_JOYSTICK_LINUX_CLASSIC, "1");
 		SDL_SetMainReady();
 
 		if (!SDL_Init(SDL_INIT_JOYSTICK)) {
@@ -380,7 +394,7 @@ class Radio {
 		return js_ != nullptr;
 	}
 
-	fc::Sticks poll() noexcept {
+	fc::Sticks poll(float dt) noexcept {
 		fc::Sticks s{};
 		if (!js_) {
 			gate_.force_disarm();
@@ -405,10 +419,20 @@ class Radio {
 		// with no centre dead band: stick down is zero, stick up is full.
 		s.throttle = clamp01((axis(map_.throttle) + 1.0f) * 0.5f);
 
-		// Arming is a switch that holds its own position, not a button, so
-		// this is level-triggered.
-		const bool arm_sw = axis(map_.arm) > map_.arm_threshold;
-		s.armed = gate_.update_level(arm_sw, false, s.throttle);
+		// Schmitt trigger on the arm channel. A plain "> threshold" compare
+		// chatters when the axis happens to rest near the threshold: one
+		// count of noise either way flips it, and at 240 Hz that reads as
+		// ARMED/disarmed alternating several times a second. Two separate
+		// levels with a gap between them means noise smaller than the gap
+		// cannot cross both.
+		const float v = axis(map_.arm);
+		if (v > map_.arm_threshold + kArmHysteresis) {
+			arm_sw_ = true;
+		} else if (v < map_.arm_threshold - kArmHysteresis) {
+			arm_sw_ = false;
+		} // in between: hold whatever it was
+
+		s.armed = gate_.update_level(arm_sw_, false, s.throttle, dt);
 		if (gate_.refused()) {
 			fmt::print(stderr, "arm refused - throttle is {:.0f}%, bring it down first\n",
 					   static_cast<double>(s.throttle) * 100.0);
@@ -471,8 +495,13 @@ class Radio {
 		return (f > 0.0f) ? (f - kDead) / (1.0f - kDead) : (f + kDead) / (1.0f - kDead);
 	}
 
+	// Gap either side of the arm threshold, in axis units. Wide enough to
+	// swallow channel noise, far narrower than a real switch throw.
+	static constexpr float kArmHysteresis = 0.15f;
+
 	SDL_Joystick *js_{nullptr};
 	bool sdl_ready_{false};
+	bool arm_sw_{false};
 	Map map_;
 	fc::ArmingGate gate_{};
 };
@@ -538,6 +567,7 @@ int main(int argc, char **argv) {
 	std::string input = "auto";
 	int baud = 115200;
 	Radio::Map chmap{};
+	int arm_hold_ms = 200;
 	bool do_list = false;
 	bool debug_pad = false;
 	bool no_pad = false;
@@ -566,12 +596,18 @@ int main(int argc, char **argv) {
 	app.add_option("--arm-threshold", chmap.arm_threshold,
 				   "arm switch counts as up above this (-1..1)")
 		->capture_default_str();
+	app.add_option("--arm-hold-ms", arm_hold_ms,
+				   "hold the arm switch up this long before it arms. Disarm is "
+				   "always immediate: delaying that would keep the motors running "
+				   "after the switch is already off")
+		->capture_default_str();
 	app.add_option("--script", script,
 				   "fly a canned stick sequence instead of a gamepad "
 				   "(arm-climb-roll, arm-hover), for testing without hands")
 		->check(CLI::IsMember({"arm-climb-roll", "arm-hover"}));
 
 	CLI11_PARSE(app, argc, argv);
+	chmap.arm_hold_s = static_cast<float>(arm_hold_ms) / 1000.0f;
 
 	if (do_list) {
 		Gamepad::list();
@@ -671,7 +707,7 @@ int main(int argc, char **argv) {
 		}
 
 		const fc::Sticks rc = scripted  ? scripted->poll(s.dt)
-							  : radio   ? radio->poll()
+							  : radio   ? radio->poll(s.dt)
 							  : pad     ? pad->poll()
 										: fc::Sticks{}; // --no-pad, or nothing plugged in
 
