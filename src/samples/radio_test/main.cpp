@@ -6,7 +6,7 @@
 // one uses the joystick API and takes the device as it is: a pile of
 // unlabelled axes with no agreed meaning.
 //
-// That is the whole point. Which axis carries throttle, and which one your arm
+// That is the point. Which axis carries throttle, and which one your arm
 // switch lands on, depends on the model config in the radio (AETR, TAER, and
 // whatever you assigned the switches to). This tells you, so you can pass the
 // numbers to fc_sitl_cpp --ch-roll / --ch-pitch / --ch-throttle / --ch-yaw /
@@ -16,14 +16,13 @@
 //   radio_test --list       enumerate devices and exit
 //   radio_test --raw        show the raw -32768..32767 instead of -1..1
 //   radio_test --events     log changes as lines instead of redrawing
-
-// Do NOT let an editor "add missing includes" action pull in consoleapi.h,
-// handleapi.h, minwindef.h, processenv.h, winbase.h or winnt.h directly.
-// Those are internal Windows SDK headers: they assume windows.h has already
-// defined the target architecture macro, and including them on their own
-// fails with #error "No Target Architecture" on both MSVC and clang-cl.
-// windows.h below is the only one that may be included, and only under the
-// _WIN32 guard.
+//
+// No platform #ifdefs and no OS headers: SDL covers the device side, and the
+// display uses plain ANSI escapes, which Linux, macOS, Windows Terminal and
+// the VS Code terminal all handle. If your editor offers to "add missing
+// includes" for things like HANDLE or DWORD, decline. Those pull internal
+// Windows SDK headers (consoleapi.h, winbase.h, winnt.h) that cannot be
+// included on their own and fail with #error "No Target Architecture".
 
 #define SDL_MAIN_HANDLED
 #include <SDL3/SDL.h>
@@ -38,13 +37,6 @@
 #include <cstdio>
 #include <string>
 
-#if defined(_WIN32)
-#ifndef WIN32_LEAN_AND_MEAN
-#define WIN32_LEAN_AND_MEAN
-#endif
-#include <windows.h>
-#endif
-
 namespace {
 
 constexpr int kAxisMax = 32767;
@@ -52,27 +44,17 @@ constexpr float kMoved = 0.15f; // counts as "you touched that one"
 constexpr int kMaxAxes = 32;	// radios expose a lot of channels
 constexpr int kMaxButtons = 32;
 
-// Older terminals need telling before they will honour cursor movement.
-void enable_ansi() noexcept {
-#if defined(_WIN32)
-	HANDLE h = ::GetStdHandle(STD_OUTPUT_HANDLE);
-	DWORD mode = 0;
-	if (h != INVALID_HANDLE_VALUE && ::GetConsoleMode(h, &mode)) {
-		::SetConsoleMode(h, mode | ENABLE_VIRTUAL_TERMINAL_PROCESSING);
-	}
-#endif
-}
-
 void set_hints() noexcept {
 	// No window here, so without this SDL ignores the device for lack of
 	// input focus.
 	SDL_SetHint(SDL_HINT_JOYSTICK_ALLOW_BACKGROUND_EVENTS, "1");
-#if !defined(_WIN32)
+
 	// SDL enumerates joysticks through udev on Linux, and WSL usually has no
 	// udev running. This makes it scan /dev/input directly instead, which is
 	// the difference between seeing the radio and seeing nothing at all.
+	// Irrelevant elsewhere, and SDL ignores a hint that does not apply, so it
+	// costs nothing to set unconditionally.
 	SDL_SetHint(SDL_HINT_JOYSTICK_LINUX_CLASSIC, "1");
-#endif
 }
 
 void list() {
@@ -86,10 +68,9 @@ void list() {
 	SDL_JoystickID *ids = SDL_GetJoysticks(&count);
 	if (!ids || count == 0) {
 		fmt::println("no joysticks found");
-		fmt::println("  radio plugged in and set to USB Joystick mode?");
-#if !defined(_WIN32)
-		fmt::println("  under WSL: usbipd attach, then check ls -l /dev/input/");
-#endif
+		fmt::println("  is the radio plugged in and set to USB Joystick mode?");
+		fmt::println("  on Linux, check ls -l /dev/input/ and whether you can read it");
+		fmt::println("  under WSL the device needs usbipd attach first");
 	} else {
 		for (int i = 0; i < count; ++i) {
 			fmt::println("{}: {}{}", i, SDL_GetJoystickNameForID(ids[i]),
@@ -107,7 +88,7 @@ void list() {
 std::string bar(float v) {
 	constexpr int kCells = 13;
 	const int mid = kCells / 2;
-	int pos = static_cast<int>(std::lround((v + 1.0f) * 0.5f * (kCells - 1)));
+	int pos = static_cast<int>(std::lround((v + 1.0F) * 0.5F * (kCells - 1)));
 	if (pos < 0)
 		pos = 0;
 	if (pos >= kCells)
@@ -122,9 +103,9 @@ std::string bar(float v) {
 }
 
 struct AxisState {
-	float value{0.0f};
-	float lo{0.0f};
-	float hi{0.0f};
+	float value{0.0F};
+	float lo{0.0F};
+	float hi{0.0F};
 	bool touched{false};
 };
 
@@ -147,7 +128,6 @@ int main(int argc, char **argv) {
 		return 0;
 	}
 
-	enable_ansi();
 	SDL_SetMainReady();
 	set_hints();
 
@@ -233,8 +213,9 @@ int main(int argc, char **argv) {
 		}
 
 		if (!events) {
-			// Redraw in place. Everything printed below the header is
-			// rewritten each frame, so the block stays put.
+			// Redraw in place: move the cursor back up over the block we drew
+			// last time. \x1b[K clears to end of line so a shorter value does
+			// not leave the tail of the previous one behind.
 			if (drawn > 0)
 				fmt::print("\x1b[{}A", drawn);
 			drawn = 0;
@@ -245,12 +226,15 @@ int main(int argc, char **argv) {
 				const auto &a = ax.at(static_cast<std::size_t>(i));
 				if (raw) {
 					fmt::println("  a{:<2d} {:+7.0f}   {:+6.0f}..{:+6.0f}  {} {}\x1b[K", i,
-								 static_cast<double>(a.value) * kAxisMax, static_cast<double>(a.lo) * kAxisMax,
-								 static_cast<double>(a.hi) * kAxisMax, bar(a.value), a.touched ? "moved" : "");
+								 static_cast<double>(a.value) * kAxisMax,
+								 static_cast<double>(a.lo) * kAxisMax,
+								 static_cast<double>(a.hi) * kAxisMax, bar(a.value),
+								 a.touched ? "moved" : "");
 				} else {
 					fmt::println("  a{:<2d} {:+6.2f}   {:+5.2f}..{:+5.2f}   {} {}\x1b[K", i,
-								 static_cast<double>(a.value), static_cast<double>(a.lo), static_cast<double>(a.hi),
-								 bar(a.value), a.touched ? "moved" : "");
+								 static_cast<double>(a.value), static_cast<double>(a.lo),
+								 static_cast<double>(a.hi), bar(a.value),
+								 a.touched ? "moved" : "");
 				}
 				++drawn;
 			}
