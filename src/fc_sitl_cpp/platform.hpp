@@ -1,6 +1,6 @@
-// platform.hpp - the only OS-specific file. Everything above it in
-// fc_core.hpp stays portable; everything below it is #ifdef'd here so
-// fc_min.cpp reads the same on both platforms.
+// The only OS-specific file in the host build. fc/core.hpp and fc/link.hpp
+// stay portable; everything platform-dependent is #ifdef'd here so main.cpp
+// reads the same on both platforms.
 //
 // Windows notes that matter:
 //

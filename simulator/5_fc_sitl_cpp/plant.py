@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 """The world and the IMU, talking to the C++ flight controller.
 
-Same split as scripts/fc_sitl, but the controller is the real
-`fc_sitl_cpp` binary instead of a Python stand-in, and the link is the
-binary CRC framing declared in src/app/fc_core.hpp rather than JSON.
+Same split as step 4, but the controller is the real `fc_sitl_cpp` binary
+instead of a Python stand-in, and the link is the binary CRC framing declared
+in src/fc_core/include/fc/link.hpp rather than JSON.
 
     plant.py                                 fc_sitl_cpp.exe
     ---------------------------              ---------------------------
@@ -13,6 +13,7 @@ binary CRC framing declared in src/app/fc_core.hpp rather than JSON.
 
     python plant.py                          # hold LB to arm
     python plant.py --no-gui --fc-args=--script=arm-hover
+    python plant.py --no-gui --script arm-hover --seconds 5 --record run.csv
 
 Either side can read the radio:
 
@@ -41,13 +42,14 @@ from pathlib import Path
 import numpy as np
 from scipy.spatial.transform import Rotation
 
-import protocol
-
 CTRL_HZ = 240
-# The radio reader and the channel mapping are shared with step 6, so they live
-# one level up rather than being copied into both.
+# The wire format, the radio reader and the stick scripts are shared with the
+# later steps, so they live one level up rather than being copied into each.
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "common"))
+import protocol  # noqa: E402
 from channels import read_sticks  # noqa: E402
+from flight_trace import TraceWriter  # noqa: E402
+from scripts import SCRIPTS  # noqa: E402
 # scripts/sitl_cpp/plant.py -> repo root. Anchored to this file, not the cwd,
 # so the script runs from anywhere.
 REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -107,6 +109,12 @@ def main():
                     help="who opens the radio: the controller over SDL3 "
                          "(default), or this script over the raw HID device")
     ap.add_argument("--radio-index", type=int, default=0)
+    ap.add_argument("--script", choices=sorted(SCRIPTS),
+                    help="send a canned stick sequence over the wire instead of "
+                         "a radio. Runs the controller with --input link, which "
+                         "is the path a Zephyr build uses")
+    ap.add_argument("--record", default=None,
+                    help="write a per-step CSV trace, for simulator/common/compare.py")
     # Only meaningful with --sticks plant. Same meaning as the controller's
     # --ch-* flags, but NOT necessarily the same numbers on Windows: see the
     # note at the top of common/radio_hid.py.
@@ -118,8 +126,13 @@ def main():
     args = ap.parse_args()
 
     radio = None
+    script = SCRIPTS[args.script] if args.script else None
     fc_args = shlex.split(args.fc_args)
-    if args.sticks == "plant":
+    if script is not None:
+        if args.sticks == "plant":
+            raise SystemExit("--script and --sticks plant both supply the sticks, pick one")
+        fc_args.append("--input=link")
+    elif args.sticks == "plant":
         from radio_hid import RadioError, open_radio
         try:
             radio = open_radio(args.radio_index)
@@ -150,8 +163,10 @@ def main():
     action = np.zeros((1, 4))
     print(f"\nplant: CF2X at {CTRL_HZ} Hz")
     print(f"controller: {fc_path}")
-    print("sticks: %s" % ("read here, sent over the wire" if radio
+    print("sticks: %s" % (f"script {args.script}, sent over the wire" if script
+                           else "read here, sent over the wire" if radio
                            else "read by the controller"))
+    trace = TraceWriter(args.record) if args.record else None
     print("acro mode - it will NOT self-level. Ctrl+C to quit.\n")
 
     try:
@@ -163,7 +178,9 @@ def main():
             gyro = Rotation.from_quat(s[3:7]).inv().apply(s[13:16])
 
             rc, arm = (None, 0.0)
-            if radio is not None:
+            if script is not None:
+                rc, arm = script(i * dt)
+            elif radio is not None:
                 sticks = read_sticks(radio, args)
                 if sticks is None:
                     radio = None          # flags go clear, the FC disarms
@@ -191,6 +208,8 @@ def main():
             # normalised demand -> rpm is a square root.
             action[0, :] = env.MAX_RPM * np.sqrt(np.clip(msg["m"], 0.0, 1.0))
             obs, _, _, _, _ = env.step(action)
+            if trace is not None:
+                trace.row((i + 1) * dt, obs[0], msg)
 
             if not args.no_gui:
                 time.sleep(dt)
@@ -206,6 +225,8 @@ def main():
     finally:
         if radio is not None:
             radio.close()
+        if trace is not None:
+            trace.close()
         env.close()
         # Closing stdin lets the controller's read loop hit EOF and exit on
         # its own; terminate() is the fallback if it does not take the hint.

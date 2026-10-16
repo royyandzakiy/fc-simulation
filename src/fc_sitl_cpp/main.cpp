@@ -1,18 +1,16 @@
-// fc_min.cpp - host side: SDL3 gamepad, CLI11 args, fmt logging.
+// Host flight controller for the simulator: SDL3 gamepad, CLI11 args, fmt logging.
 //
-//   conan install . --output-folder=build --build=missing -s compiler.cppstd=17
-//   cmake --preset conan-default
-//   cmake --build build --config Release
-//
-//   fc_min                          pipes, first pad SDL finds
-//   fc_min --throttle trigger       right trigger instead of left stick
-//   fc_min --dev COM7               serial instead of pipes
-//   fc_min --list                   show detected pads and exit
+//   fc_sitl_cpp                          pipes, first pad SDL finds
+//   fc_sitl_cpp --throttle trigger       right trigger instead of left stick
+//   fc_sitl_cpp --dev COM7               serial instead of pipes
+//   fc_sitl_cpp --list                   show detected pads and exit
 //
 // Portable across clang-cl, MSVC, GCC and Clang. All OS-specific I/O is in
-// platform.hpp; all flight logic is in fc_core.hpp. This file is glue.
+// platform.hpp, flight logic in fc/core.hpp, the frame codec in fc/link.hpp.
+// This file is glue.
 
-#include "fc_core.hpp"
+#include "fc/core.hpp"
+#include "fc/link.hpp"
 #include "platform.hpp"
 #include <SDL3/SDL_error.h>
 #include <SDL3/SDL_events.h>
@@ -491,66 +489,6 @@ class Radio {
 };
 
 // ===================================================================
-// Sticks that arrive in the sensor packet, read by whatever is on the
-// other end of the wire. No SDL, no device, nothing that can fail to
-// open - which is the whole point: a Zephyr native_sim build has no way
-// to reach a USB HID device, so this is how it gets sticks at all.
-//
-// The sender ships the RAW arm channel, not a decision. Threshold,
-// hysteresis, hold time, the throttle gate and the startup guard stay
-// here in firmware, because that is the code that eventually flies.
-// ===================================================================
-
-class LinkSticks {
-  public:
-	explicit LinkSticks(const Radio::Map &m) noexcept {
-		arm_.configure(m.arm_threshold, m.arm_hold_s);
-	}
-
-	fc::Sticks poll(const fc::SensorPacket &p) noexcept {
-		fc::Sticks s{};
-
-		if ((p.flags & fc::kFlagSticksValid) == 0) {
-			// The other end has no radio open. Say so once, then stay quiet
-			// and stay disarmed rather than flying on a packet of zeroes.
-			if (!warned_) {
-				warned_ = true;
-				fmt::print(stderr, "link: sender reports no radio, staying disarmed\n");
-			}
-			arm_.force_disarm();
-			return s;
-		}
-		warned_ = false;
-
-		s.roll = clamp11(p.rc[0]);
-		s.pitch = clamp11(p.rc[1]);
-		s.yaw = clamp11(p.rc[2]);
-		s.throttle = clamp01(p.rc[3]);
-
-		s.armed = arm_.update(clamp11(p.arm), false, s.throttle, p.dt);
-		if (arm_.refused()) {
-			fmt::print(stderr, "arm refused - throttle is {:.0f}%, bring it down first\n",
-					   static_cast<double>(s.throttle) * 100.0);
-		}
-		if (!s.armed)
-			s.throttle = 0.0f;
-
-		return s;
-	}
-
-  private:
-	static float clamp01(float v) noexcept {
-		return (v < 0.0f) ? 0.0f : (v > 1.0f) ? 1.0f : v;
-	}
-	static float clamp11(float v) noexcept {
-		return (v < -1.0f) ? -1.0f : (v > 1.0f) ? 1.0f : v;
-	}
-
-	fc::ArmSwitch arm_{};
-	bool warned_{false};
-};
-
-// ===================================================================
 // Scripted sticks: a canned sequence driven by simulated time, so the
 // loop can be flown end to end with no hands and no gamepad. Time comes
 // from the sensor packet's dt, not a wall clock, so it stays in lockstep
@@ -612,6 +550,7 @@ int main(int argc, char **argv) {
 	int baud = 115200;
 	Radio::Map chmap{};
 	int arm_hold_ms = 200;
+	int rc_timeout_ms = 500;
 	bool do_list = false;
 	bool debug_pad = false;
 	bool no_pad = false;
@@ -647,6 +586,9 @@ int main(int argc, char **argv) {
 				   "always immediate: delaying that would keep the motors running "
 				   "after the switch is already off")
 		->capture_default_str();
+	app.add_option("--rc-timeout-ms", rc_timeout_ms,
+				   "--input link: disarm once no valid sticks have arrived for this long")
+		->capture_default_str();
 	app.add_option("--script", script,
 				   "fly a canned stick sequence instead of a gamepad "
 				   "(arm-climb-roll, arm-hover), for testing without hands")
@@ -670,10 +612,11 @@ int main(int argc, char **argv) {
 	// host to speak of.
 	std::optional<Gamepad> pad;
 	std::optional<Radio> radio;
-	std::optional<LinkSticks> link;
+	std::optional<fc::LinkSticks> link;
 
 	if (!no_pad && script.empty() && input == "link") {
-		link.emplace(chmap);
+		link.emplace();
+		link->configure(chmap.arm_threshold, chmap.arm_hold_s, static_cast<float>(rc_timeout_ms) / 1000.0f);
 	} else if (!no_pad && script.empty()) {
 		if (input != "joystick") {
 			pad.emplace(throttle == "trigger" ? Gamepad::Throttle::RightTrigger
@@ -743,40 +686,51 @@ int main(int argc, char **argv) {
 	}
 
 	fc::Controller controller;
+	fc::link::SensorReader reader;
 	bool was_armed = false;
+	bool was_lost = false;
 
 	for (;;) {
-		// resync on the sync byte, then pull the rest of the frame
 		std::uint8_t b{};
 		if (!io.read_exact(&b, 1))
 			break;
-		if (b != fc::kSyncSensor)
-			continue;
-
-		fc::SensorPacket s{};
-		s.sync = b;
-		if (!io.read_exact(reinterpret_cast<std::uint8_t *>(&s) + 1, sizeof(s) - 1)) {
-			break;
-		}
-
-		if (fc::packet_crc(s) != s.crc) {
+		const auto res = reader.push(b);
+		if (res == fc::link::SensorReader::Result::BadCrc) {
 			fmt::print(stderr, "rx: bad crc, dropping\n");
 			continue;
 		}
+		if (res != fc::link::SensorReader::Result::Frame)
+			continue;
+		const fc::link::SensorFrame &s = reader.frame();
 
 		const fc::Sticks rc = scripted ? scripted->poll(s.dt)
-							  : link   ? link->poll(s)
+							  : link   ? link->poll(s.rc, s.dt)
 							  : radio  ? radio->poll(s.dt)
 							  : pad    ? pad->poll()
 									   : fc::Sticks{}; // --no-pad, or nothing plugged in
 
+		if (link) {
+			if (link->refused())
+				fmt::print(stderr, "arm refused - throttle is {:.0f}%, bring it down first\n",
+						   static_cast<double>(s.rc.rc[3]) * 100.0);
+			if (link->rc_lost() != was_lost) {
+				fmt::print(stderr, "{}\n", link->rc_lost() ? "link: no valid sticks, failsafe" : "link: sticks valid");
+				was_lost = link->rc_lost();
+			}
+		}
 		if (rc.armed != was_armed) {
 			fmt::print(stderr, "{}\n", rc.armed ? "ARMED" : "disarmed");
 			was_armed = rc.armed;
 		}
 
-		const fc::MotorPacket out = controller.step(s, rc);
-		if (!io.write_all(&out, sizeof(out)))
+		const fc::link::MotorFrame out{
+			.seq = s.seq,
+			.m = controller.step(s.gyro, rc, s.dt),
+			.rc = {rc.roll, rc.pitch, rc.yaw, rc.throttle},
+			.armed = rc.armed,
+		};
+		const auto bytes = fc::link::encode_motor(out);
+		if (!io.write_all(bytes.data(), bytes.size()))
 			break;
 	}
 

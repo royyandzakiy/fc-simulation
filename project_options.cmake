@@ -15,7 +15,7 @@ if(BUILD_LIB)
   option(BUILD_LIB_SHARED "Build MyLib as SHARED/DLL (ON) or STATIC (OFF)" ON)
   option(GENERATE_VERSION_HEADER "Generate include/<project>/version.h from version.txt" ON)
 endif()
-option(BUILD_TESTING "Build the unit tests under test/" OFF)
+option(BUILD_TESTING "Build the unit tests under test/" ON)
 option(BUILD_EXAMPLES "Build the examples/ demos (MyLib consumer, Tracy/Perfetto examples, …)" OFF)
 
 # ------ Package Manager ------

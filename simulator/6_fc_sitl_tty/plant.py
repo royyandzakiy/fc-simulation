@@ -32,10 +32,9 @@ from pathlib import Path
 import numpy as np
 from scipy.spatial.transform import Rotation
 
-# The wire format is identical to step 5, so import it rather than copying it.
+# The wire format is shared with step 5, so import it rather than copying it.
 # Two copies of a packet definition drift, and the C++ side only has one.
 REPO_ROOT = Path(__file__).resolve().parents[2]
-sys.path.insert(0, str(REPO_ROOT / "simulator" / "5_fc_sitl_cpp"))
 sys.path.insert(0, str(REPO_ROOT / "simulator" / "common"))
 import protocol  # noqa: E402
 from channels import read_sticks  # noqa: E402
