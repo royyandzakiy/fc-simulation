@@ -1,13 +1,15 @@
 # fc-simulation
 
 A minimum viable quadcopter flight controller in C++23, and a Python simulator
-to fly it against before any hardware exists. The firmware sees only gyro
-frames arriving on a pipe and a gamepad it reads itself, which is the same
-thing it would see wired to a real board.
+to fly it against before any hardware exists. The same flight logic runs as a
+host program and as Zephyr firmware for the ESP32, and the simulator flies
+both. The firmware sees only gyro frames arriving on a link and sticks, which
+is the same thing it would see wired to a real board.
 
 > **Status: exploratory.** I am building this one rung at a time and the layout
 > keeps moving, so do not depend on the folder names or the wire format yet.
-> The five simulator steps all work today and are the useful part.
+> The nine simulator steps all work today. The Zephyr build flies in the
+> simulator and builds for the ESP32, but has not run on one yet.
 
 ```
 plant: CF2X at 240 Hz
@@ -23,12 +25,16 @@ t=  2.0s ARM thr=0.62 z=  3.60 m  roll=  -0.0 pitch=  +0.0 deg  m=['0.62','0.62'
 
 - **Lockstep HIL over a pipe.** Every physics step blocks on the controller's
   reply, so nothing runs in real time and a run reproduces exactly.
-- **Binary framing with CRC**, declared once in `src/fc_sitl_cpp/fc_core.hpp` and
-  mirrored in Python: 43-byte sensor frame (`0xA5`), 39-byte motor frame
+- **Binary framing with CRC**, declared once in `src/fc_core/include/fc/link.hpp`
+  and mirrored in Python: 43-byte sensor frame (`0xA5`), 39-byte motor frame
   (`0x5A`), CRC-8 poly `0xD5`, the same polynomial CRSF uses.
-- **Flight logic with zero I/O.** `fc_core.hpp` holds the rate PID, the mixer
-  and the arming gate and touches no hardware, so it unit-tests on a host and
-  should port to a target unchanged.
+- **Flight logic with zero I/O.** `src/fc_core/include/fc/core.hpp` holds the
+  rate PID, the mixer, the arming gate and the RC-loss failsafe and touches no
+  hardware. It is unit-tested on the host and under Zephyr's ztest, and builds
+  unchanged for Windows, Linux, `native_sim` and the ESP32.
+- **Zephyr firmware, checked by trace.** [fw/](fw/README.md) is the same core as
+  a Zephyr app. The simulator records a per-step trace, and the Zephyr build
+  flies the goldens recorded from the host build to the last printed digit.
 - **A real plant**, gym-pybullet-drones' `CtrlAviary` flying a Crazyflie 2.X at
   27 g, rather than a physics model I made up.
 - **The gamepad belongs to the controller**, not to the simulator, because that
@@ -99,6 +105,9 @@ step.
 | 4 | CtrlAviary | Python, acro | **JSON lines over a pipe** | pad, owned by the controller |
 | 5 | CtrlAviary | **C++ `fc_sitl_cpp`** | **binary + CRC-8** | pad or radio over SDL3 |
 | 6 | CtrlAviary | C++ `fc_sitl_cpp` | **pty, with an emulated baud** | **either side may read it** |
+| 7 | none | **Zephyr `native_sim`**, byte echo | **pty created by Zephyr** | none |
+| 8 | none | Zephyr, frame echo, then **the real app** | pty | **hand-made frames** |
+| 9 | CtrlAviary | **Zephyr `fw/app`** | pty | plant: radio or script |
 
 Step 3 is where the interface stops being invented: `CtrlAviary` owns the
 mixer, so the controller's job becomes producing four motor demands, which is
@@ -108,6 +117,13 @@ to change. Step 6 swaps the pipe for a pseudo-terminal, which is what Zephyr
 will hand you, and makes the wire speed visible: at 115200 the round trip is
 7.12 ms against a 4.17 ms control period, so it tops out near 140 Hz.
 
+Steps 7 to 9 bring in Zephyr, with the same rule: one thing at a time. Step 7
+only proves a script can reach a `native_sim` binary through the pty it prints.
+Step 8 sends hand-made frames with no physics, first to firmware that only
+answers them, then to the real controller to check its arming and failsafe
+rules. Step 9 puts the Zephyr build behind the step 5 plant and compares the
+flight against the host build's.
+
 ## Requirements
 
 - CMake 3.23 or newer, and a C++23 compiler
@@ -116,6 +132,9 @@ will hand you, and makes the wire speed visible: at 115200 the round trip is
   commented line right above it to switch to vcpkg
 - CPython 3.11 for the simulator. Everything installs from a wheel, so no MSVC
   toolchain is needed for the Python side
+- For the Zephyr firmware and steps 7 to 9: Linux or WSL, plus about 3.5 GB for
+  the Zephyr workspace and SDK that
+  [fw/scripts/setup_zephyr_ws.sh](fw/scripts/setup_zephyr_ws.sh) installs
 - An Xbox-style gamepad, if you want to fly it rather than watch a script
 - Tested on: Windows 11, clang-cl, Xbox 360 controller. Nothing else yet
 
@@ -127,6 +146,15 @@ cd fc-simulation
 cmake --preset clang-cl-debug
 cmake --build --preset clang-cl-debug
 ```
+
+That builds the unit tests too. Run them with:
+
+```bash
+ctest --test-dir build/clang-cl-debug
+```
+
+The Zephyr firmware builds separately, under Linux or WSL. See
+[fw/README.md](fw/README.md).
 
 The simulator shares one environment at the repo root:
 
@@ -148,7 +176,7 @@ imports. See [requirements-gpd.txt](requirements-gpd.txt) for the details.
 
 ## Usage
 
-The simulator is five steps, each one adding a single thing. Run them in order
+The simulator is nine steps, each one adding a single thing. Run them in order
 the first time, since each answers a question the next one assumes.
 
 | step | what it adds | run |
@@ -159,6 +187,9 @@ the first time, since each answers a question the next one assumes.
 | [4. fc sitl py](simulator/4_fc_sitl_py/README.md) | controller split into its own process | `.venv\Scripts\python.exe simulator\4_fc_sitl_py\plant.py` |
 | [5. fc sitl cpp](simulator/5_fc_sitl_cpp/README.md) | the real C++ controller in the loop | `.venv\Scripts\python.exe simulator\5_fc_sitl_cpp\plant.py` |
 | [6. fc sitl tty](simulator/6_fc_sitl_tty/README.md) | a pty instead of a pipe, and a real baud rate | `python simulator/6_fc_sitl_tty/plant.py` (Linux) |
+| [7. zephyr uart echo](simulator/7_zephyr_uart_echo/README.md) | a Zephyr binary on the other end | `python3 simulator/7_zephyr_uart_echo/echo_check.py` (Linux) |
+| [8. zephyr link check](simulator/8_zephyr_link_check/README.md) | frames and flight rules, no physics | `python3 simulator/8_zephyr_link_check/link_check.py --app app` (Linux) |
+| [9. fc zephyr](simulator/9_fc_zephyr/README.md) | the Zephyr firmware in the loop | `python simulator/9_fc_zephyr/plant.py --script arm-hover` (Linux) |
 
 Step 5 is the one that matters. It launches the binary itself, so that command
 is all you need once the firmware is built. Press LB with the throttle down to
@@ -194,10 +225,10 @@ To fly it without a gamepad, the firmware carries canned stick scripts:
 - **The Python gamepad reader at step 2 is Windows only.** It uses XInput
   through ctypes, and only Xbox-style pads show up there at all. Everything else
   runs on both.
-- **No tests run.** `test/` has a file in it, but `add_subdirectory(test)` is
-  commented out in `CMakeLists.txt`. `fc_core.hpp` is pure logic and would
-  unit-test cleanly, I just have not wired it up.
-- No CI, so "tested on" above means I ran it on my machine.
+- **The ESP32 build has not run on an ESP32.** It builds, in CI too, and the
+  MPU-6050 sample builds, but nothing has been flashed yet.
+- CI is written but has not run on GitHub yet. Every step in it has been run by
+  hand under WSL.
 - gym-pybullet-drones is pinned to a git commit rather than a release, and it
   declares `>=3.12` while running fine on 3.11, so the install needs
   `--ignore-requires-python`.
@@ -205,9 +236,9 @@ To fly it without a gamepad, the firmware carries canned stick scripts:
 
 ## Roadmap
 
-Porting `fc_core.hpp` to Zephyr is the next real step. It is already written
-with no I/O in it for exactly that reason, so the work should be the platform
-layer in `platform.hpp` and the build, not the flight logic.
+See [plan.md](plan.md). Next is the ESP32 on the bench: the same app flown by
+the simulator over the DevKitC's USB-UART, then the MPU-6050 replacing the
+simulated gyro.
 
 ## License
 

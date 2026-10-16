@@ -11,6 +11,7 @@ target_include_directories(${MY_PROJECT_NAME}
 
 target_link_libraries(${MY_PROJECT_NAME}
     PRIVATE
+        fc::core
         CLI11::CLI11
         fmt::fmt
         SDL3::SDL3

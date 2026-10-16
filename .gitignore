@@ -88,6 +88,8 @@ desktop.ini
 .Python
 [Bb]in
 [Ii]nclude
+# The venv rule above matches any include/ directory, including the flight core's headers.
+!src/fc_core/include/
 [Ll]ib
 [Ll]ib64
 [Ll]ocal

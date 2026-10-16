@@ -1,0 +1,12 @@
+/* MPU-6050 breakout on the DevKitC's default I2C pins: SDA GPIO21,
+ * SCL GPIO22, 3V3 and GND. AD0 low gives address 0x68.
+ */
+&i2c0 {
+	clock-frequency = <I2C_BITRATE_FAST>;
+
+	mpu6050: mpu6050@68 {
+		compatible = "invensense,mpu6050";
+		reg = <0x68>;
+		status = "okay";
+	};
+};

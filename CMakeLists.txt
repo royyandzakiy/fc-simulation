@@ -11,8 +11,11 @@ if(CMAKE_SOURCE_DIR STREQUAL CMAKE_CURRENT_SOURCE_DIR)
   # If this project is consumed via add_subdirectory(), the parent owns the provider/toolchain, hence
   # omit this setup_package_maanager(). But because before project(), PROJECT_IS_TOP_LEVEL isn't set yet
   # hence use the source-dir check
-  set(PKG_MANAGER "conan")
-  # set(PKG_MANAGER "vcpkg")
+  # -DPKG_MANAGER=none keeps system packages, for CI building only the core tests.
+  if(NOT PKG_MANAGER STREQUAL "none")
+    set(PKG_MANAGER "conan")
+    # set(PKG_MANAGER "vcpkg")
+  endif()
   
   setup_package_manager() # dispatches to vcpkg / conan / none per PKG_MANAGER
 endif()
@@ -57,20 +60,29 @@ endif()
 #=========================
 # Dependencies
 #=========================
-find_package(fmt CONFIG REQUIRED)
-find_package(SDL3 CONFIG REQUIRED)
-find_package(CLI11 CONFIG REQUIRED)
+# BUILD_APP=OFF skips everything that needs SDL3, so the core and its tests
+# build with nothing but a compiler and GoogleTest.
+if(BUILD_APP)
+  find_package(fmt CONFIG REQUIRED)
+  find_package(SDL3 CONFIG REQUIRED)
+  find_package(CLI11 CONFIG REQUIRED)
+endif()
 
 
 #=========================
 # Targets
 #=========================
-add_subdirectory(src/fc_sitl_cpp)
-# add_subdirectory(src/samples/gamepad_btn_test)
-add_subdirectory(src/samples/radio_test)
+add_subdirectory(src/fc_core)
+if(BUILD_APP)
+  add_subdirectory(src/fc_sitl_cpp)
+  # add_subdirectory(src/samples/gamepad_btn_test)
+  add_subdirectory(src/samples/radio_test)
+endif()
 
 #=========================
 # Tests & Coverage
 #=========================
-# enable_testing() # ctest / gtest_discover_tests register the unit tests
-# add_subdirectory(test)
+if(BUILD_TESTING)
+  enable_testing()
+  add_subdirectory(test)
+endif()

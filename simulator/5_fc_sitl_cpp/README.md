@@ -2,7 +2,7 @@
 
 Same split as [step 4](../4_fc_sitl_py/README.md), except the controller is the
 actual `fc_sitl_cpp` binary from `src/fc_sitl_cpp/`, and the link is the binary CRC
-framing declared in `src/fc_sitl_cpp/fc_core.hpp` instead of JSON.
+framing declared in `src/fc_core/include/fc/link.hpp` instead of JSON.
 
 ```
   plant.py                                 fc_sitl_cpp.exe
@@ -75,9 +75,11 @@ Controller flags worth knowing: `--script arm-hover` / `--script arm-climb-roll`
 
 ## Wire format
 
-Exactly the structs in `src/fc_sitl_cpp/fc_core.hpp`, which `static_assert` their own
-sizes. [protocol.py](protocol.py) mirrors them with `struct` and a hand-rolled
-CRC, so this step installs nothing extra. The bytes are identical either way.
+Exactly the layout in `src/fc_core/include/fc/link.hpp`, which copies each field
+in and out at a fixed offset. [protocol.py](../common/protocol.py) mirrors it with
+`struct` and a hand-rolled CRC, so this step installs nothing extra. The bytes
+are identical either way, and `test/test_link.cpp` pins one frame from each side
+together.
 
 ```
 sensor  43 B  0xA5  seq u32, dt f32, gyro[3] f32,
@@ -106,6 +108,26 @@ runs before any byte moves, because on Windows the CRT would otherwise translate
 `0x0A` to `0x0D 0x0A` and corrupt every frame containing that byte, which floats
 produce constantly. And stdout is the data channel, so everything the controller
 prints for a human goes to stderr.
+
+## Golden runs
+
+`--script` sends a canned stick sequence from this side instead of a radio, and
+runs the controller with `--input link`. That is the path the Zephyr build
+uses, so a scripted run here is directly comparable with one at
+[step 9](../9_fc_zephyr/README.md). `--record` writes a per-step CSV trace:
+
+```bash
+.venv\Scripts\python.exe simulator_fc_sitl_cpp\plant.py --no-gui --script arm-hover --seconds 5 --record run.csv
+.venv\Scripts\python.exe simulator\common\compare.py simulator\goldenrm_hover.csv run.csv
+```
+
+The two files in `simulator/golden/` were recorded this way from the host
+build. Lockstep makes a rerun match to the last printed digit, so any
+difference `compare.py` reports is a behaviour change.
+
+The scripts live in [scripts.py](../common/scripts.py) and arm through the arm
+switch the same way a radio does: down at boot, up at 0.5 s, throttle up at
+0.8 s, after the 0.2 s hold.
 
 ## Acro only
 

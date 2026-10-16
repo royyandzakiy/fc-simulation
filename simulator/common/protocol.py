@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""The wire format, mirroring the #pragma pack(1) structs in src/app/fc_core.hpp.
+"""The wire format, mirroring src/fc_core/include/fc/link.hpp.
 
 Deliberately built on `struct` and a hand-rolled CRC rather than construct/crc
 so this folder installs nothing extra. The bytes are identical either way -
@@ -15,7 +15,7 @@ opens its own device.
 
 CRC-8 over every byte before the crc field itself: poly 0xD5, init 0, no
 reflection, no final xor. Same polynomial CRSF uses, and the same crc8() the
-C++ side computes in fc_core.hpp.
+C++ side computes in fc/link.hpp.
 """
 
 import struct
@@ -24,7 +24,7 @@ SYNC_SENSOR = 0xA5
 SYNC_MOTOR = 0x5A
 CRC_POLY = 0xD5
 
-# "<" little endian, no padding - matches #pragma pack(push, 1)
+# "<" little endian, no padding, same offsets as fc/link.hpp
 _SENSOR_BODY = struct.Struct("<BIf3f4ffB")
 _MOTOR_BODY = struct.Struct("<BI4f4fB")
 
@@ -36,7 +36,7 @@ FLAG_STICKS_VALID = 0x01
 SENSOR_LEN = _SENSOR_BODY.size + 1
 MOTOR_LEN = _MOTOR_BODY.size + 1
 
-# The C++ side static_asserts these, so a mismatch means the two definitions
+# fc/link.hpp static_asserts these, so a mismatch means the two definitions
 # have drifted apart.
 assert SENSOR_LEN == 43, SENSOR_LEN
 assert MOTOR_LEN == 39, MOTOR_LEN

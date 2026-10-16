@@ -1,0 +1,16 @@
+/* Link on the second pty. The first one is disabled: logs go to
+ * zephyr.exe's stdout instead, so there is exactly one pty to find.
+ */
+/ {
+	chosen {
+		fc,link-uart = &uart1;
+	};
+};
+
+&uart0 {
+	status = "disabled";
+};
+
+&uart1 {
+	status = "okay";
+};

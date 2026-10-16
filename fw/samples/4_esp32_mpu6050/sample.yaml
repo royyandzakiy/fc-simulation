@@ -1,0 +1,9 @@
+sample:
+  name: MPU-6050 gyro on ESP32
+common:
+  tags: fc
+tests:
+  fc.samples.esp32_mpu6050:
+    build_only: true
+    platform_allow:
+      - esp32_devkitc/esp32/procpu

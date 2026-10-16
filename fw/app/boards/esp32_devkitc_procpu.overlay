@@ -1,0 +1,13 @@
+/* Link on uart0, the DevKitC's USB-UART bridge, the only port reachable
+ * without extra wiring. 460800 baud leaves headroom at 240 Hz: 82 B per
+ * exchange is 1.8 ms on the wire against a 4.17 ms period.
+ */
+/ {
+	chosen {
+		fc,link-uart = &uart0;
+	};
+};
+
+&uart0 {
+	current-speed = <460800>;
+};
