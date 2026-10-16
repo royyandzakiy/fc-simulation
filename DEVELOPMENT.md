@@ -1,4 +1,5 @@
+- add option to have joystick from python script, instead of the fc.cpp
+    - --stick=fc doesnt work, findout why, fix
 - add to switch pov camera infront / away
 - add ability to switch modes: acro, stab
 - create zephyr version
-- use usb hid joystick

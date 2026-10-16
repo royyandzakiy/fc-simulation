@@ -347,7 +347,7 @@ class Radio {
 	};
 
 	explicit Radio(Map m) noexcept : map_{m} {
-		gate_.set_arm_hold(map_.arm_hold_s);
+		arm_.configure(map_.arm_threshold, map_.arm_hold_s);
 		SDL_SetHint(SDL_HINT_JOYSTICK_ALLOW_BACKGROUND_EVENTS, "1");
 
 		// SDL enumerates joysticks through udev on Linux, and WSL runs no udev,
@@ -397,7 +397,7 @@ class Radio {
 	fc::Sticks poll(float dt) noexcept {
 		fc::Sticks s{};
 		if (!js_) {
-			gate_.force_disarm();
+			arm_.force_disarm();
 			return s;
 		}
 
@@ -407,7 +407,7 @@ class Radio {
 			fmt::print(stderr, "radio: disconnected, failsafe\n");
 			SDL_CloseJoystick(js_);
 			js_ = nullptr;
-			gate_.force_disarm();
+			arm_.force_disarm();
 			return s;
 		}
 
@@ -419,21 +419,10 @@ class Radio {
 		// with no centre dead band: stick down is zero, stick up is full.
 		s.throttle = clamp01((axis(map_.throttle) + 1.0f) * 0.5f);
 
-		// Schmitt trigger on the arm channel. A plain "> threshold" compare
-		// chatters when the axis happens to rest near the threshold: one
-		// count of noise either way flips it, and at 240 Hz that reads as
-		// ARMED/disarmed alternating several times a second. Two separate
-		// levels with a gap between them means noise smaller than the gap
-		// cannot cross both.
-		const float v = axis(map_.arm);
-		if (v > map_.arm_threshold + kArmHysteresis) {
-			arm_sw_ = true;
-		} else if (v < map_.arm_threshold - kArmHysteresis) {
-			arm_sw_ = false;
-		} // in between: hold whatever it was
-
-		s.armed = gate_.update_level(arm_sw_, false, s.throttle, dt);
-		if (gate_.refused()) {
+		// Threshold, hysteresis, hold and the throttle gate all live in
+		// fc::ArmSwitch, so this path and the over-the-wire one cannot drift.
+		s.armed = arm_.update(axis(map_.arm), false, s.throttle, dt);
+		if (arm_.refused()) {
 			fmt::print(stderr, "arm refused - throttle is {:.0f}%, bring it down first\n",
 					   static_cast<double>(s.throttle) * 100.0);
 		}
@@ -495,15 +484,70 @@ class Radio {
 		return (f > 0.0f) ? (f - kDead) / (1.0f - kDead) : (f + kDead) / (1.0f - kDead);
 	}
 
-	// Gap either side of the arm threshold, in axis units. Wide enough to
-	// swallow channel noise, far narrower than a real switch throw.
-	static constexpr float kArmHysteresis = 0.15f;
-
 	SDL_Joystick *js_{nullptr};
 	bool sdl_ready_{false};
-	bool arm_sw_{false};
 	Map map_;
-	fc::ArmingGate gate_{};
+	fc::ArmSwitch arm_{};
+};
+
+// ===================================================================
+// Sticks that arrive in the sensor packet, read by whatever is on the
+// other end of the wire. No SDL, no device, nothing that can fail to
+// open - which is the whole point: a Zephyr native_sim build has no way
+// to reach a USB HID device, so this is how it gets sticks at all.
+//
+// The sender ships the RAW arm channel, not a decision. Threshold,
+// hysteresis, hold time, the throttle gate and the startup guard stay
+// here in firmware, because that is the code that eventually flies.
+// ===================================================================
+
+class LinkSticks {
+  public:
+	explicit LinkSticks(const Radio::Map &m) noexcept {
+		arm_.configure(m.arm_threshold, m.arm_hold_s);
+	}
+
+	fc::Sticks poll(const fc::SensorPacket &p) noexcept {
+		fc::Sticks s{};
+
+		if ((p.flags & fc::kFlagSticksValid) == 0) {
+			// The other end has no radio open. Say so once, then stay quiet
+			// and stay disarmed rather than flying on a packet of zeroes.
+			if (!warned_) {
+				warned_ = true;
+				fmt::print(stderr, "link: sender reports no radio, staying disarmed\n");
+			}
+			arm_.force_disarm();
+			return s;
+		}
+		warned_ = false;
+
+		s.roll = clamp11(p.rc[0]);
+		s.pitch = clamp11(p.rc[1]);
+		s.yaw = clamp11(p.rc[2]);
+		s.throttle = clamp01(p.rc[3]);
+
+		s.armed = arm_.update(clamp11(p.arm), false, s.throttle, p.dt);
+		if (arm_.refused()) {
+			fmt::print(stderr, "arm refused - throttle is {:.0f}%, bring it down first\n",
+					   static_cast<double>(s.throttle) * 100.0);
+		}
+		if (!s.armed)
+			s.throttle = 0.0f;
+
+		return s;
+	}
+
+  private:
+	static float clamp01(float v) noexcept {
+		return (v < 0.0f) ? 0.0f : (v > 1.0f) ? 1.0f : v;
+	}
+	static float clamp11(float v) noexcept {
+		return (v < -1.0f) ? -1.0f : (v > 1.0f) ? 1.0f : v;
+	}
+
+	fc::ArmSwitch arm_{};
+	bool warned_{false};
 };
 
 // ===================================================================
@@ -586,8 +630,10 @@ int main(int argc, char **argv) {
 				 "stream gamepad state to the console instead of flying");
 	app.add_flag("--no-pad", no_pad, "ignore any gamepad: neutral sticks, never arms");
 	app.add_option("--input", input,
-				   "stick source: auto (gamepad, else radio), gamepad, joystick")
-		->check(CLI::IsMember({"auto", "gamepad", "joystick"}));
+				   "stick source: auto (gamepad, else radio), gamepad, joystick, "
+				   "or link to take the sticks out of the sensor packet instead "
+				   "of opening a device here")
+		->check(CLI::IsMember({"auto", "gamepad", "joystick", "link"}));
 	app.add_option("--ch-roll", chmap.roll, "radio axis carrying roll")->capture_default_str();
 	app.add_option("--ch-pitch", chmap.pitch, "radio axis carrying pitch")->capture_default_str();
 	app.add_option("--ch-throttle", chmap.throttle, "radio axis carrying throttle")->capture_default_str();
@@ -619,10 +665,16 @@ int main(int argc, char **argv) {
 	//
 	// auto prefers a mapped gamepad and falls back to a bare joystick, which
 	// is what a transmitter in USB HID mode looks like.
+	// link is the exception: it opens nothing, so SDL is never initialised at
+	// all. That is what lets this same source build for a target with no USB
+	// host to speak of.
 	std::optional<Gamepad> pad;
 	std::optional<Radio> radio;
+	std::optional<LinkSticks> link;
 
-	if (!no_pad && script.empty()) {
+	if (!no_pad && script.empty() && input == "link") {
+		link.emplace(chmap);
+	} else if (!no_pad && script.empty()) {
 		if (input != "joystick") {
 			pad.emplace(throttle == "trigger" ? Gamepad::Throttle::RightTrigger
 											  : Gamepad::Throttle::LeftStick);
@@ -672,6 +724,12 @@ int main(int argc, char **argv) {
 		fmt::print(stderr, "sticks: script {}\n", script);
 	} else if (no_pad) {
 		fmt::print(stderr, "sticks: --no-pad, neutral, never arms\n");
+	} else if (link) {
+		fmt::print(stderr,
+				   "sticks: over the link, the sender maps the channels. "
+				   "arm >{:.2f}, hold {:.0f} ms\n",
+				   static_cast<double>(chmap.arm_threshold),
+				   static_cast<double>(chmap.arm_hold_s) * 1000.0);
 	} else if (radio) {
 		fmt::print(stderr,
 				   "sticks: radio  roll=a{} pitch=a{} throttle=a{} yaw=a{} arm=a{} (>{:.2f})\n",
@@ -706,10 +764,11 @@ int main(int argc, char **argv) {
 			continue;
 		}
 
-		const fc::Sticks rc = scripted  ? scripted->poll(s.dt)
-							  : radio   ? radio->poll(s.dt)
-							  : pad     ? pad->poll()
-										: fc::Sticks{}; // --no-pad, or nothing plugged in
+		const fc::Sticks rc = scripted ? scripted->poll(s.dt)
+							  : link   ? link->poll(s)
+							  : radio  ? radio->poll(s.dt)
+							  : pad    ? pad->poll()
+									   : fc::Sticks{}; // --no-pad, or nothing plugged in
 
 		if (rc.armed != was_armed) {
 			fmt::print(stderr, "{}\n", rc.armed ? "ARMED" : "disarmed");

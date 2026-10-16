@@ -36,14 +36,16 @@ from scipy.spatial.transform import Rotation
 # Two copies of a packet definition drift, and the C++ side only has one.
 REPO_ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(REPO_ROOT / "simulator" / "5_fc_sitl_cpp"))
+sys.path.insert(0, str(REPO_ROOT / "simulator" / "common"))
 import protocol  # noqa: E402
+from channels import read_sticks  # noqa: E402
 
 CTRL_HZ = 240
 BITS_PER_BYTE = 10          # 8N1: one start bit, eight data, one stop
 
 
 def find_fc():
-    names = ("fc_sitl_cpp", "fc_sitl_cpp.exe")
+    names = ("fc_sitl_cpp",)   # ptys are POSIX, so there is only one candidate
     found = [p for root in ("bin", "build") for name in names
              for p in (REPO_ROOT / root).rglob(name) if p.is_file()]
     if not found:
@@ -62,9 +64,9 @@ def serialisation_s(n_bytes, baud):
 def spin(seconds):
     """Busy-wait.
 
-    time.sleep on Linux rounds up to roughly a millisecond, which is coarser
-    than the 0.95 ms a 22 byte frame takes at 230400, so sleeping would swamp
-    the thing being measured.
+    time.sleep on Linux rounds up to roughly a millisecond, the same order as
+    the 1.87 ms a 43 byte frame takes at 230400, so sleeping would swamp the
+    thing being measured.
     """
     if seconds <= 0:
         return
@@ -93,6 +95,15 @@ def main():
                     help="emulated wire speed; 0 runs the pty unthrottled")
     ap.add_argument("--no-gui", action="store_true")
     ap.add_argument("--seconds", type=float, default=20.0)
+    ap.add_argument("--sticks", choices=("fc", "plant"), default="fc",
+                    help="who opens the radio: the controller over SDL3 "
+                         "(default), or this script over the raw HID device")
+    ap.add_argument("--radio-index", type=int, default=0)
+    ap.add_argument("--ch-roll", type=int, default=0)
+    ap.add_argument("--ch-pitch", type=int, default=1)
+    ap.add_argument("--ch-throttle", type=int, default=2)
+    ap.add_argument("--ch-yaw", type=int, default=3)
+    ap.add_argument("--ch-arm", type=int, default=4)
     args = ap.parse_args()
 
     if not hasattr(os, "openpty"):
@@ -103,12 +114,23 @@ def main():
 
     fc_path = Path(args.fc) if args.fc else find_fc()
 
+    radio = None
+    extra = shlex.split(args.fc_args)
+    if args.sticks == "plant":
+        from radio_hid import RadioError, open_radio
+        try:
+            radio = open_radio(args.radio_index)
+        except RadioError as exc:
+            raise SystemExit("radio: %s" % exc)
+        print("radio: %s (read here, not by the controller)" % radio.name)
+        extra.append("--input=link")
+
     master, slave = os.openpty()
     slave_path = os.ttyname(slave)
 
     fc = subprocess.Popen(
         [str(fc_path), "--dev", slave_path, "--baud", str(args.baud or 115200)]
-        + shlex.split(args.fc_args),
+        + extra,
         stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL)
     # The controller has its own handle now. Holding this end open means EOF
     # never arrives when it exits, and the read below would block forever.
@@ -146,7 +168,15 @@ def main():
             s = obs[0]
             gyro = Rotation.from_quat(s[3:7]).inv().apply(s[13:16])
 
-            os.write(master, protocol.build_sensor(i, dt, gyro))
+            rc, arm = (None, 0.0)
+            if radio is not None:
+                sticks = read_sticks(radio, args)
+                if sticks is None:
+                    radio = None          # flags go clear, the FC disarms
+                else:
+                    rc, arm = sticks
+
+            os.write(master, protocol.build_sensor(i, dt, gyro, rc, arm))
             spin(tx)
 
             frame = read_exact(master, protocol.MOTOR_LEN)
@@ -181,6 +211,8 @@ def main():
     except KeyboardInterrupt:
         print("\nbye")
     finally:
+        if radio is not None:
+            radio.close()
         env.close()
         os.close(master)          # EOF: the controller's read loop ends
         try:

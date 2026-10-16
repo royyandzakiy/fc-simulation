@@ -24,6 +24,12 @@ inline constexpr std::uint8_t kSyncSensor = 0xA5;
 inline constexpr std::uint8_t kSyncMotor = 0x5A;
 inline constexpr std::uint8_t kCrcPoly = 0xD5; // CRC-8, same as CRSF
 
+// SensorPacket::flags. Set when rc[] and arm carry a real radio's values,
+// clear when the sender has no sticks to offer. Without it, "no radio" and
+// "every stick centred with the arm switch down" are the same bytes, and the
+// controller sits silently disarmed with nothing to say about why.
+inline constexpr std::uint8_t kFlagSticksValid = 0x01;
+
 // #pragma pack rather than [[gnu::packed]]: MSVC ignores the attribute
 // outright, which would silently reintroduce padding and desync the wire
 // format from bridge.py. This one spelling is honoured by clang-cl, MSVC,
@@ -35,6 +41,15 @@ struct SensorPacket {
 	std::uint32_t seq;
 	float dt;				   // seconds since last packet
 	std::array<float, 3> gyro; // body rates, rad/s
+
+	// Sticks, for when the sender reads the radio rather than the controller.
+	// Always on the wire whether or not anyone filled them in: one framing is
+	// worth more than the bytes a second frame type would save, and a Zephyr
+	// build cannot open a USB HID device at all, so this is the only route
+	// sticks have to reach it. Ignored unless --input link.
+	std::array<float, 4> rc; // roll, pitch, yaw in -1..1; throttle in 0..1
+	float arm;				 // raw arm-channel value, -1..1, unthresholded
+	std::uint8_t flags;		 // kFlagSticksValid
 	std::uint8_t crc;
 };
 
@@ -50,7 +65,7 @@ struct MotorPacket {
 #pragma pack(pop)
 
 // Fire at compile time if any toolchain reintroduces padding.
-static_assert(sizeof(SensorPacket) == 22, "SensorPacket size");
+static_assert(sizeof(SensorPacket) == 43, "SensorPacket size");
 static_assert(sizeof(MotorPacket) == 39, "MotorPacket size");
 
 constexpr std::uint8_t crc8(const std::uint8_t *p, std::size_t n) noexcept {
@@ -340,12 +355,64 @@ class ArmingGate {
   private:
 	bool armed_{false};
 	bool prev_btn_{false}; // update(), edge-triggered button
-	bool prev_sw_{false};  // update_level(), physical switch
 	float arm_hold_s_{0.2f};  // switch must stay up this long to arm
 	float high_for_{0.0f};    // how long it has been up
 	bool decided_{false};     // this flip has already been judged
 	bool seen_low_{false}; // switch observed down at least once since boot
 	bool refused_{false};
+};
+
+// ===================================================================
+// Schmitt trigger on an analogue arm channel, feeding the gate above.
+//
+// A plain "> threshold" compare chatters when the axis happens to rest near
+// the threshold: one count of noise either way flips it, and at 240 Hz that
+// reads as ARMED/disarmed alternating several times a second. Two levels with
+// a gap between them means noise smaller than the gap cannot cross both.
+//
+// Lives here rather than beside the SDL code because both stick sources need
+// it: the radio the controller opens itself, and the channels a simulator
+// sends over the wire. One copy, one behaviour, and no SDL in either.
+// ===================================================================
+
+class ArmSwitch {
+  public:
+	// Gap either side of the threshold, in axis units. Wide enough to swallow
+	// channel noise, far narrower than a real switch throw.
+	static constexpr float kDefaultHysteresis = 0.15f;
+
+	void configure(float threshold, float hold_s,
+				   float hysteresis = kDefaultHysteresis) noexcept {
+		threshold_ = threshold;
+		hyst_ = (hysteresis > 0.0f) ? hysteresis : 0.0f;
+		gate_.set_arm_hold(hold_s);
+	}
+
+	bool update(float raw_axis, bool panic, float throttle, float dt) noexcept {
+		if (raw_axis > threshold_ + hyst_) {
+			high_ = true;
+		} else if (raw_axis < threshold_ - hyst_) {
+			high_ = false;
+		} // in between: hold whatever it was
+
+		return gate_.update_level(high_, panic, throttle, dt);
+	}
+
+	void force_disarm() noexcept {
+		gate_.force_disarm();
+	}
+	bool armed() const noexcept {
+		return gate_.armed();
+	}
+	bool refused() const noexcept {
+		return gate_.refused();
+	}
+
+  private:
+	ArmingGate gate_{};
+	bool high_{false};
+	float threshold_{0.5f};
+	float hyst_{kDefaultHysteresis};
 };
 
 } // namespace fc

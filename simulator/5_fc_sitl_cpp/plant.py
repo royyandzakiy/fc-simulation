@@ -14,6 +14,19 @@ binary CRC framing declared in src/app/fc_core.hpp rather than JSON.
     python plant.py                          # hold LB to arm
     python plant.py --no-gui --fc-args=--script=arm-hover
 
+Either side can read the radio:
+
+    --sticks fc     the controller opens the HID device itself, over SDL3.
+                    What real hardware does, and the default.
+    --sticks plant  this script opens it and ships the channels inside the
+                    sensor packet. The controller runs --input link and never
+                    touches SDL, which is what a Zephyr build will need, since
+                    native_sim cannot reach a USB device at all.
+
+Either way the ARMING DECISION stays in C++. --sticks plant sends the raw arm
+channel, not an armed flag: threshold, hysteresis, hold and the throttle gate
+all live in fc::ArmSwitch, because that is the code that eventually flies.
+
 Strict lockstep: every physics step blocks on the controller's reply, so
 nothing runs in real time and runs reproduce exactly.
 """
@@ -31,6 +44,10 @@ from scipy.spatial.transform import Rotation
 import protocol
 
 CTRL_HZ = 240
+# The radio reader and the channel mapping are shared with step 6, so they live
+# one level up rather than being copied into both.
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "common"))
+from channels import read_sticks  # noqa: E402
 # scripts/sitl_cpp/plant.py -> repo root. Anchored to this file, not the cwd,
 # so the script runs from anywhere.
 REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -42,7 +59,9 @@ def find_fc():
     Newest rather than first so it picks up whichever toolchain you built
     last, instead of a stale binary from another compiler.
     """
-    names = ("fc_sitl_cpp.exe", "fc_sitl_cpp")
+    # Only this platform's binary. Building for both leaves two under bin/,
+    # and picking the newest across them hands Windows an ELF.
+    names = ("fc_sitl_cpp.exe",) if sys.platform == "win32" else ("fc_sitl_cpp",)
     found = [p for root in ("bin", "build")
              for name in names
              for p in (REPO_ROOT / root).rglob(name) if p.is_file()]
@@ -84,13 +103,39 @@ def main():
                          "(use --fc-args=--flag when the value starts with a dash)")
     ap.add_argument("--no-gui", action="store_true")
     ap.add_argument("--seconds", type=float, default=120.0)
+    ap.add_argument("--sticks", choices=("fc", "plant"), default="fc",
+                    help="who opens the radio: the controller over SDL3 "
+                         "(default), or this script over the raw HID device")
+    ap.add_argument("--radio-index", type=int, default=0)
+    # Only meaningful with --sticks plant. Same meaning as the controller's
+    # --ch-* flags, but NOT necessarily the same numbers on Windows: see the
+    # note at the top of common/radio_hid.py.
+    ap.add_argument("--ch-roll", type=int, default=0)
+    ap.add_argument("--ch-pitch", type=int, default=1)
+    ap.add_argument("--ch-throttle", type=int, default=2)
+    ap.add_argument("--ch-yaw", type=int, default=3)
+    ap.add_argument("--ch-arm", type=int, default=4)
     args = ap.parse_args()
+
+    radio = None
+    fc_args = shlex.split(args.fc_args)
+    if args.sticks == "plant":
+        from radio_hid import RadioError, open_radio
+        try:
+            radio = open_radio(args.radio_index)
+        except RadioError as exc:
+            raise SystemExit("radio: %s" % exc)
+        print("radio: %s (read here, not by the controller)" % radio.name)
+        # Tell the controller to take its sticks off the wire. Doing that here
+        # rather than making you pass both flags is the point of one switch:
+        # the two ends cannot end up disagreeing about who owns the radio.
+        fc_args.append("--input=link")
 
     from gym_pybullet_drones.envs.CtrlAviary import CtrlAviary
     from gym_pybullet_drones.utils.enums import DroneModel, Physics
 
     fc_path = Path(args.fc) if args.fc else find_fc()
-    fc = start_fc(fc_path, shlex.split(args.fc_args))
+    fc = start_fc(fc_path, fc_args)
 
     env = CtrlAviary(
         drone_model=DroneModel.CF2X,
@@ -105,6 +150,8 @@ def main():
     action = np.zeros((1, 4))
     print(f"\nplant: CF2X at {CTRL_HZ} Hz")
     print(f"controller: {fc_path}")
+    print("sticks: %s" % ("read here, sent over the wire" if radio
+                           else "read by the controller"))
     print("acro mode - it will NOT self-level. Ctrl+C to quit.\n")
 
     try:
@@ -115,7 +162,15 @@ def main():
             # frame; a real gyro measures body rates, so rotate before sending.
             gyro = Rotation.from_quat(s[3:7]).inv().apply(s[13:16])
 
-            fc.stdin.write(protocol.build_sensor(i, dt, gyro))
+            rc, arm = (None, 0.0)
+            if radio is not None:
+                sticks = read_sticks(radio, args)
+                if sticks is None:
+                    radio = None          # flags go clear, the FC disarms
+                else:
+                    rc, arm = sticks
+
+            fc.stdin.write(protocol.build_sensor(i, dt, gyro, rc, arm))
             fc.stdin.flush()
 
             # lockstep: block here until the controller answers
@@ -149,6 +204,8 @@ def main():
     except KeyboardInterrupt:
         print("\nbye")
     finally:
+        if radio is not None:
+            radio.close()
         env.close()
         # Closing stdin lets the controller's read loop hit EOF and exit on
         # its own; terminate() is the fallback if it does not take the hint.

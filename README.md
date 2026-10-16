@@ -24,7 +24,7 @@ t=  2.0s ARM thr=0.62 z=  3.60 m  roll=  -0.0 pitch=  +0.0 deg  m=['0.62','0.62'
 - **Lockstep HIL over a pipe.** Every physics step blocks on the controller's
   reply, so nothing runs in real time and a run reproduces exactly.
 - **Binary framing with CRC**, declared once in `src/fc_sitl_cpp/fc_core.hpp` and
-  mirrored in Python: 22-byte sensor frame (`0xA5`), 39-byte motor frame
+  mirrored in Python: 43-byte sensor frame (`0xA5`), 39-byte motor frame
   (`0x5A`), CRC-8 poly `0xD5`, the same polynomial CRSF uses.
 - **Flight logic with zero I/O.** `fc_core.hpp` holds the rate PID, the mixer
   and the arming gate and touches no hardware, so it unit-tests on a host and
@@ -32,7 +32,10 @@ t=  2.0s ARM thr=0.62 z=  3.60 m  roll=  -0.0 pitch=  +0.0 deg  m=['0.62','0.62'
 - **A real plant**, gym-pybullet-drones' `CtrlAviary` flying a Crazyflie 2.X at
   27 g, rather than a physics model I made up.
 - **The gamepad belongs to the controller**, not to the simulator, because that
-  is where the receiver lives on a real aircraft.
+  is where the receiver lives on a real aircraft. `--sticks plant` flips it for
+  the case where it has to: a Zephyr `native_sim` build cannot reach a USB
+  device at all, so the sticks have to come down the wire instead. The arming
+  decision stays in C++ either way.
 
 ## Architecture
 
@@ -53,16 +56,19 @@ flowchart LR
     subgraph CPP["src/fc_sitl_cpp (C++23)"]
         PID["RatePid x3<br/>acro rate loop"]
         MIX["Mixer<br/>CF2X X-layout"]
-        GATE["ArmingGate<br/>LB toggles"]
-        PAD["SDL3 gamepad"]
+        GATE["ArmSwitch + ArmingGate<br/>threshold, hysteresis, hold"]
+        PAD["SDL3 gamepad or radio<br/>--sticks fc, the default"]
         PAD --> GATE --> PID --> MIX
     end
 
-    IMU -- "0xA5 sensor, 22 B<br/>seq, dt, gyro x3, crc" --> PID
+    IMU -- "0xA5 sensor, 43 B<br/>seq, dt, gyro x3,<br/>rc x4, arm, flags, crc" --> PID
     MIX -- "0x5A motor, 39 B<br/>seq, m x4, rc x4, armed, crc" --> CONV
 
     HW["real board<br/>--dev COM7"]
     CPP -.->|"same binary,<br/>pipe swapped for a serial port"| HW
+
+    RAD["raw HID joystick<br/>--sticks plant"]
+    RAD -.->|"channels ride in the<br/>sensor frame, arming<br/>still decided in C++"| GATE
 ```
 
 Every physics step blocks on the controller's reply. Nothing runs in real time,
@@ -72,6 +78,13 @@ the sim take longer rather than dropping frames.
 The gamepad hangs off the firmware, not the simulator, because that is where
 the receiver sits on a real aircraft. The plant never sees a stick position, it
 only sees four motor demands coming back.
+
+`--sticks plant` is the exception, and it exists for one reason: a Zephyr
+`native_sim` binary has no USB host to speak of, so if the sticks do not arrive
+on the wire they do not arrive. The plant then reads the HID device itself and
+fills in `rc[4]` and the raw arm channel. It sends the raw channel deliberately,
+not an armed flag: the threshold, the hysteresis, the hold and the throttle gate
+all stay in `fc::ArmSwitch`, because that is the code that eventually flies.
 
 ## Progression
 
@@ -84,13 +97,16 @@ step.
 | 2 | none | none | none | **read the pad** |
 | 3 | **CtrlAviary, CF2X, motor RPM** | Python, stabilised | none | **both sticks** |
 | 4 | CtrlAviary | Python, acro | **JSON lines over a pipe** | pad, owned by the controller |
-| 5 | CtrlAviary | **C++ `fc_sitl_cpp`** | **binary + CRC-8** | pad over SDL3 |
+| 5 | CtrlAviary | **C++ `fc_sitl_cpp`** | **binary + CRC-8** | pad or radio over SDL3 |
+| 6 | CtrlAviary | C++ `fc_sitl_cpp` | **pty, with an emulated baud** | **either side may read it** |
 
 Step 3 is where the interface stops being invented: `CtrlAviary` owns the
 mixer, so the controller's job becomes producing four motor demands, which is
 what the firmware already produces. Step 4 moves the controller out of the
 process. Step 5 replaces it with the real one and nothing about the plant has
-to change.
+to change. Step 6 swaps the pipe for a pseudo-terminal, which is what Zephyr
+will hand you, and makes the wire speed visible: at 115200 the round trip is
+7.12 ms against a 4.17 ms control period, so it tops out near 140 Hz.
 
 ## Requirements
 
@@ -142,10 +158,23 @@ the first time, since each answers a question the next one assumes.
 | [3. ctrlaviary check](simulator/3_ctrlaviary_check/README.md) | the real plant, then flying it stabilised | `.venv\Scripts\python.exe simulator\3_ctrlaviary_check\fly_demo.py` |
 | [4. fc sitl py](simulator/4_fc_sitl_py/README.md) | controller split into its own process | `.venv\Scripts\python.exe simulator\4_fc_sitl_py\plant.py` |
 | [5. fc sitl cpp](simulator/5_fc_sitl_cpp/README.md) | the real C++ controller in the loop | `.venv\Scripts\python.exe simulator\5_fc_sitl_cpp\plant.py` |
+| [6. fc sitl tty](simulator/6_fc_sitl_tty/README.md) | a pty instead of a pipe, and a real baud rate | `python simulator/6_fc_sitl_tty/plant.py` (Linux) |
 
 Step 5 is the one that matters. It launches the binary itself, so that command
 is all you need once the firmware is built. Press LB with the throttle down to
 arm, press again to disarm, B is a hard disarm.
+
+Either side can own the radio. `--sticks fc` is the default and matches
+hardware; `--sticks plant` has this script read the HID device and send the
+channels down the wire, which is what a Zephyr build will need:
+
+```bash
+.venv\Scripts\python.exe simulator\5_fc_sitl_cpp\plant.py --sticks plant
+```
+
+`python simulator/common/radio_hid.py` prints live channel numbers if you need
+to find your `--ch-*` values. Those numbers do **not** carry between Windows and
+Linux: the two backends enumerate axes differently.
 
 To fly it without a gamepad, the firmware carries canned stick scripts:
 
@@ -158,9 +187,13 @@ To fly it without a gamepad, the firmware carries canned stick scripts:
 - **The C++ controller is acro only.** It is given body rates and nothing else,
   and a rate is all you can close a loop on. Stabilised mode exists only in the
   Python `fly_demo.py` at step 3.
-- **Windows only in practice.** The Python gamepad reader uses XInput through
-  ctypes, and only Xbox-style pads show up there at all. The C++ side uses SDL3
-  so it should be portable, but I have not tried it anywhere else.
+- **The Windows radio reader is unproven.** `common/radio_hid.py` reads
+  `/dev/input/jsN` on Linux, which works, and `joyGetPosEx` on Windows, which
+  has never been run against an actual radio. `joyGetPosEx` also tops out at six
+  axes, so a transmitter reporting eight loses the top two there.
+- **The Python gamepad reader at step 2 is Windows only.** It uses XInput
+  through ctypes, and only Xbox-style pads show up there at all. Everything else
+  runs on both.
 - **No tests run.** `test/` has a file in it, but `add_subdirectory(test)` is
   commented out in `CMakeLists.txt`. `fc_core.hpp` is pure logic and would
   unit-test cleanly, I just have not wired it up.

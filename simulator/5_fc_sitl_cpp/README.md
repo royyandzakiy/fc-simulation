@@ -15,6 +15,40 @@ framing declared in `src/fc_sitl_cpp/fc_core.hpp` instead of JSON.
 The controller has no idea it is being simulated. Swap the pipe for a serial
 port with `--dev COM7` and the same binary talks to real hardware.
 
+## Who reads the radio
+
+`--sticks fc` is the default and is what hardware does: the controller opens the
+HID device itself over SDL3 and the plant never sees a stick position.
+
+`--sticks plant` turns it around. This script reads the device and the channels
+ride inside the sensor frame; the controller runs `--input link` and never
+initialises SDL at all. That last part is the reason it exists: a Zephyr
+`native_sim` build has no USB host, so sticks that do not arrive on the wire do
+not arrive.
+
+```bash
+.venv@B@Scripts@B@python.exe simulator@B@5_fc_sitl_cpp@B@plant.py --sticks plant
+```
+
+**The arming decision stays in C++ either way.** The plant sends the raw arm
+channel, never an armed flag. Threshold, Schmitt hysteresis, the hold time, the
+throttle gate and the startup guard all live in `fc::ArmSwitch`, because that is
+the code that eventually flies, and a simulator has no business owning a safety
+interlock.
+
+Channel numbers are set with `--ch-roll` / `--ch-pitch` / `--ch-throttle` /
+`--ch-yaw` / `--ch-arm` on whichever side is doing the reading. To find them:
+
+```bash
+python simulator/common/radio_hid.py
+```
+
+They do **not** transfer between hosts. `/dev/input/jsN` on Linux reports the
+radio's own axis order, the same one `src/samples/radio_test` prints.
+`joyGetPosEx` on Windows reports a fixed X, Y, Z, R, U, V and has no way to
+express a seventh axis, so an eight-channel radio loses the top two. Check them
+per host.
+
 ## Run
 
 Build the firmware first, then:
@@ -37,7 +71,7 @@ hands:
 
 Controller flags worth knowing: `--script arm-hover` / `--script arm-climb-roll`
 (canned stick sequences), `--no-pad` (neutral sticks, never arms), `--list`,
-`--debug-pad`, `--dev <port>`.
+`--debug-pad`, `--dev <port>`, `--input auto|gamepad|joystick|link`.
 
 ## Wire format
 
@@ -46,9 +80,17 @@ sizes. [protocol.py](protocol.py) mirrors them with `struct` and a hand-rolled
 CRC, so this step installs nothing extra. The bytes are identical either way.
 
 ```
-sensor  22 B  0xA5  seq u32, dt f32, gyro[3] f32, crc u8
+sensor  43 B  0xA5  seq u32, dt f32, gyro[3] f32,
+                    rc[4] f32, arm f32, flags u8, crc u8
 motor   39 B  0x5A  seq u32, m[4] f32, rc[4] f32, armed u8, crc u8
 ```
+
+The sensor frame always carries the stick fields, whether or not anyone filled
+them in. One framing is worth more than the bytes a second frame type would
+save, and it means switching sides is a flag rather than a different
+conversation on the wire. `flags` bit 0 says the fields mean something: without
+it, "no radio here" and "sticks centred, arm switch down" are the same bytes and
+the controller has nothing to say about why it will not arm.
 
 CRC-8 over every preceding byte: poly `0xD5`, init 0, no reflection, no final
 xor, the same polynomial CRSF uses. A frame that fails CRC gets dropped by the
