@@ -1,0 +1,8 @@
+/* Link on uart0, the DevKitC's USB-UART bridge. Logs share it in this
+ * sample, so echoed bytes and log lines interleave in a terminal.
+ */
+/ {
+	chosen {
+		fc,link-uart = &uart0;
+	};
+};

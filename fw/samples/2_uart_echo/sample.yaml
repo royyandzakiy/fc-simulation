@@ -1,0 +1,12 @@
+sample:
+  name: link uart echo
+common:
+  tags: fc
+tests:
+  fc.samples.uart_echo:
+    build_only: true
+    platform_allow:
+      - native_sim/native/64
+      - esp32_devkitc/esp32/procpu
+    integration_platforms:
+      - native_sim/native/64

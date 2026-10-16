@@ -1,0 +1,26 @@
+menu "Flight controller"
+
+config FC_ARM_THRESHOLD_PERMILLE
+	int "Arm channel threshold, in thousandths of full scale"
+	range -1000 1000
+	default 500
+	help
+	  The arm switch counts as up above this, with fc::ArmSwitch's
+	  hysteresis either side. Same as the host build's --arm-threshold.
+
+config FC_ARM_HOLD_MS
+	int "Arm switch hold time (ms)"
+	default 200
+	help
+	  The switch must stay up this long before the controller arms.
+	  Disarm is always immediate.
+
+config FC_RC_TIMEOUT_MS
+	int "RC-loss failsafe timeout (ms)"
+	default 500
+	help
+	  Disarm once no frame with valid sticks has arrived for this long.
+
+endmenu
+
+source "Kconfig.zephyr"
