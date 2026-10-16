@@ -30,7 +30,11 @@ cd "$WS"
 west config manifest.project-filter -- '-.*,+hal_espressif'
 west update --narrow -o=--depth=1
 
-pip install -q -r zephyr/scripts/requirements-base.txt esptool
+# Base for west build, build-test and run-test for twister, esptool for
+# flashing the ESP32.
+pip install -q -r zephyr/scripts/requirements-base.txt \
+	-r zephyr/scripts/requirements-build-test.txt \
+	-r zephyr/scripts/requirements-run-test.txt esptool
 
 # Espressif ships the radio and bootloader pieces as binary blobs, outside git
 west blobs fetch hal_espressif

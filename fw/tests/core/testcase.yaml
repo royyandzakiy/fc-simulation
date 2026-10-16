@@ -1,0 +1,12 @@
+common:
+  tags: fc
+tests:
+  fc.core:
+    platform_allow:
+      - native_sim/native/64
+    integration_platforms:
+      - native_sim/native/64
+  fc.core.esp32:
+    build_only: true
+    platform_allow:
+      - esp32_devkitc/esp32/procpu

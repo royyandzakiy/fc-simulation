@@ -1,0 +1,101 @@
+# Host unit tests, Zephyr builds and ztest, then the simulator flying the
+# Zephyr firmware against the golden traces.
+name: ci
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  host-tests:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+
+      # The core and its tests need only a compiler and GoogleTest, so this
+      # skips Conan and everything SDL3 pulls in.
+      - name: Install GoogleTest
+        run: sudo apt-get update && sudo apt-get install -y libgtest-dev ninja-build
+
+      - name: Configure
+        run: cmake -S . -B build/ci -G Ninja -DPKG_MANAGER=none -DBUILD_APP=OFF -DBUILD_TESTING=ON
+
+      - name: Build
+        run: cmake --build build/ci
+
+      - name: Test
+        run: ctest --test-dir build/ci --output-on-failure
+
+  zephyr:
+    runs-on: ubuntu-24.04
+    env:
+      ZEPHYR_WS: ${{ github.workspace }}/../zephyr-ws
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ${{ github.workspace }}/../zephyr-ws
+            ~/zephyr-sdk-*
+          key: zephyr-ws-${{ hashFiles('fw/scripts/setup_zephyr_ws.sh') }}
+
+      # Same script as local setup, so CI and a developer machine build
+      # against the same Zephyr revision and modules. Reruns are no-ops.
+      - name: Zephyr workspace
+        run: bash fw/scripts/setup_zephyr_ws.sh
+
+      # Runs the ztest suite and the console sample on native_sim, and
+      # builds every sample and the app for the ESP32.
+      - name: Twister
+        run: |
+          . fw/scripts/env.sh
+          west twister -T fw -p native_sim/native/64 -p esp32_devkitc/esp32/procpu \
+            -O build/twister --inline-logs
+
+      - name: Build firmware for the simulator
+        run: |
+          . fw/scripts/env.sh
+          west build -b native_sim/native/64 fw/samples/3_link_echo -d build/fw/3_link_echo
+          west build -b native_sim/native/64 fw/app -d build/fw/app
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: fw-native-sim
+          path: |
+            build/fw/3_link_echo/zephyr/zephyr.exe
+            build/fw/app/zephyr/zephyr.exe
+
+  simulator:
+    needs: zephyr
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: fw-native-sim
+          path: build/fw
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Simulator dependencies
+        run: |
+          pip install -r requirements.txt
+          pip install --no-deps --ignore-requires-python -r requirements-gpd.txt
+
+      - name: Link checks
+        run: |
+          chmod +x build/fw/*/zephyr/zephyr.exe
+          python simulator/8_zephyr_link_check/link_check.py
+          python simulator/8_zephyr_link_check/link_check.py --app app
+
+      - name: Golden runs
+        run: |
+          python simulator/9_fc_zephyr/plant.py --no-gui --script arm-hover --seconds 5 \
+            --record build/arm_hover.csv --compare simulator/golden/arm_hover.csv
+          python simulator/9_fc_zephyr/plant.py --no-gui --script arm-climb-roll --seconds 4 \
+            --record build/arm_climb_roll.csv --compare simulator/golden/arm_climb_roll.csv
